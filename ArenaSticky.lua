@@ -6,12 +6,54 @@ ArenaSticky.frame = CreateFrame("Frame")
 ArenaSticky.enemyClasses = {}
 ArenaSticky.playerRole = nil
 ArenaSticky.currentCompKey = nil
+ArenaSticky.specByGuid = ArenaSticky.specByGuid or {}
+ArenaSticky.guidToUnit = ArenaSticky.guidToUnit or {}
+
+local ROLE_TOKENS = {
+    "WARRIOR", "HUNTER", "ROGUE", "MAGE", "WARLOCK",
+    "RET", "HPAL",
+    "RSHAM", "ELE", "ENH",
+    "DISC", "SHADOW",
+    "RESTO", "BOOMY", "FERAL",
+    -- Legacy/base tokens
+    "PALADIN", "SHAMAN", "PRIEST", "DRUID",
+}
+
+local DEFAULT_SPEC_TOKEN = {
+    DRUID = "RESTO",
+    SHAMAN = "RSHAM",
+    PRIEST = "DISC",
+    PALADIN = "HPAL",
+}
+
+local AURA_SPEC_TOKEN = {
+    ["Shadowform"] = "SHADOW",
+    ["Vampiric Embrace"] = "SHADOW",
+    ["Tree of Life"] = "RESTO",
+    ["Moonkin Form"] = "BOOMY",
+    ["Earth Shield"] = "RSHAM",
+    ["Crusader Strike"] = "RET", -- debuff name in some builds; harmless if absent
+}
+
+local SPELL_SPEC_TOKEN = {
+    ["Shadowform"] = "SHADOW",
+    ["Vampiric Touch"] = "SHADOW",
+    ["Tree of Life"] = "RESTO",
+    ["Moonkin Form"] = "BOOMY",
+    ["Earth Shield"] = "RSHAM",
+    ["Elemental Mastery"] = "ELE",
+    ["Stormstrike"] = "ENH",
+    ["Shamanistic Rage"] = "ENH",
+    ["Crusader Strike"] = "RET",
+    ["Divine Storm"] = "RET",
+    ["Holy Shock"] = "HPAL",
+}
 
 local COMP_ALIASES = {
-    wld = "DRUID-WARLOCK-WARRIOR",
-    hpr = "HUNTER-PRIEST-ROGUE",
-    thug = "HUNTER-PRIEST-ROGUE",
-    rmp = "MAGE-PRIEST-ROGUE",
+    wld = "RESTO-WARLOCK-WARRIOR",
+    hpr = "DISC-HUNTER-ROGUE",
+    thug = "DISC-HUNTER-ROGUE",
+    rmp = "DISC-MAGE-ROGUE",
 }
 
 local function DeepCopy(tbl)
@@ -26,6 +68,23 @@ end
 local function NormalizeCompKey(classes)
     table.sort(classes)
     return table.concat(classes, "-")
+end
+
+local function ToLegacyClassToken(token)
+    if token == "RET" or token == "HPAL" then return "PALADIN" end
+    if token == "RSHAM" or token == "ELE" or token == "ENH" then return "SHAMAN" end
+    if token == "DISC" or token == "SHADOW" then return "PRIEST" end
+    if token == "RESTO" or token == "BOOMY" or token == "FERAL" then return "DRUID" end
+    return token
+end
+
+local function ToLegacyCompKey(compKey)
+    if not compKey or compKey == "" then return compKey end
+    local parts = {}
+    for p in compKey:gmatch("[^-]+") do
+        table.insert(parts, ToLegacyClassToken(p))
+    end
+    return NormalizeCompKey(parts)
 end
 
 local function ResolveTestAlias(arg)
@@ -91,7 +150,63 @@ local function GetMyRole()
         return ArenaStickyDB.playerRoleOverride
     end
     local _, class = UnitClass("player")
+    if not class then return nil end
+
+    if GetTalentTabInfo then
+        local bestTab, bestPoints = nil, -1
+        for i = 1, 3 do
+            local _, _, points = GetTalentTabInfo(i)
+            if (points or 0) > bestPoints then
+                bestPoints = points or 0
+                bestTab = i
+            end
+        end
+
+        if class == "PRIEST" then
+            if bestTab == 3 then return "SHADOW" end
+            return "DISC"
+        elseif class == "DRUID" then
+            if bestTab == 1 then return "BOOMY" end
+            if bestTab == 2 then return "FERAL" end
+            return "RESTO"
+        elseif class == "SHAMAN" then
+            if bestTab == 1 then return "ELE" end
+            if bestTab == 2 then return "ENH" end
+            return "RSHAM"
+        elseif class == "PALADIN" then
+            if bestTab == 3 then return "RET" end
+            return "HPAL"
+        end
+    end
+
+    -- Fallback to class token
     return class
+end
+
+local function DetectSpecFromAuras(unit)
+    if not UnitExists(unit) then return nil end
+    for i = 1, 40 do
+        local name = UnitBuff(unit, i)
+        if not name then break end
+        local token = AURA_SPEC_TOKEN[name]
+        if token then return token end
+    end
+    return nil
+end
+
+local function GetEnemyToken(unit)
+    local _, class = UnitClass(unit)
+    if not class then return nil end
+    local guid = UnitGUID(unit)
+    if guid and ArenaSticky.specByGuid[guid] then
+        return ArenaSticky.specByGuid[guid]
+    end
+    local auraToken = DetectSpecFromAuras(unit)
+    if guid and auraToken then
+        ArenaSticky.specByGuid[guid] = auraToken
+        return auraToken
+    end
+    return DEFAULT_SPEC_TOKEN[class] or class
 end
 
 local function CreateMainFrame()
@@ -140,7 +255,7 @@ local function CreateMainFrame()
 
     local footer = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     footer:SetPoint("BOTTOMLEFT", 12, 8)
-    footer:SetText("Type /asticky edit to modify")
+    footer:SetText("Type /as edit to modify")
 
     ArenaSticky.mainFrame = f
     ArenaSticky.titleText = title
@@ -164,9 +279,9 @@ local function ParseEnemyCompFromArenaUnits()
     for i = 1, 3 do
         local unit = "arena" .. i
         if UnitExists(unit) then
-            local _, class = UnitClass(unit)
-            if class then
-                table.insert(ArenaSticky.enemyClasses, class)
+            local token = GetEnemyToken(unit)
+            if token then
+                table.insert(ArenaSticky.enemyClasses, token)
             end
         end
     end
@@ -193,8 +308,17 @@ local function UpdateNotesForComp(compKey)
 
     local strat = ArenaStickyDB.strategies[compKey]
     if not strat then
+        local legacyKey = ToLegacyCompKey(compKey)
+        if legacyKey and legacyKey ~= compKey then
+            strat = ArenaStickyDB.strategies[legacyKey]
+            if strat then
+                compKey = legacyKey
+            end
+        end
+    end
+    if not strat then
         ArenaSticky.headerText:SetText("Kill: TBD  |  CC: TBD")
-        ArenaSticky.bodyText:SetText("No strategy saved for: " .. compKey .. "\nUse /asticky edit to add one.")
+        ArenaSticky.bodyText:SetText("No strategy saved for: " .. compKey .. "\nUse /as edit to add one.")
         ArenaSticky.mainFrame:Show()
         return
     end
@@ -224,32 +348,54 @@ function ArenaSticky:BroadcastStrategies()
 end
 
 local function SerializeStrategiesSimple()
-    -- Simple custom format: comp~kill~cc~priest~rogue~mage ; ...
+    -- Stable custom format:
+    -- comp~kill~cc~<ROLE_TOKENS...> ; ...
+    -- (Values are escaped for "~" and ";" using backticks.)
+    local function esc(s)
+        s = s or ""
+        s = s:gsub("`", "``")
+        s = s:gsub("~", "`t")
+        s = s:gsub(";", "`s")
+        return s
+    end
     local parts = {}
     for comp, data in pairs(ArenaStickyDB.strategies) do
         local h = data.header or {}
         local r = data.roles or {}
-        local seg = table.concat({
-            comp,
-            h.kill or "",
-            h.cc or "",
-            r.PRIEST or "",
-            r.ROGUE or "",
-            r.MAGE or "",
-        }, "~")
+        local segParts = { esc(comp), esc(h.kill), esc(h.cc) }
+        for _, token in ipairs(ROLE_TOKENS) do
+            table.insert(segParts, esc(r[token]))
+        end
+        local seg = table.concat(segParts, "~")
         table.insert(parts, seg)
     end
     return table.concat(parts, ";")
 end
 
 local function DeserializeStrategiesSimple(str)
+    local function unesc(s)
+        s = s or ""
+        s = s:gsub("``", "`0")
+        s = s:gsub("`t", "~")
+        s = s:gsub("`s", ";")
+        s = s:gsub("`0", "`")
+        return s
+    end
     local out = {}
     for seg in string.gmatch(str or "", "([^;]+)") do
-        local a, b, c, d, e, f = strsplit("~", seg)
+        local fields = { strsplit("~", seg) }
+        local a = fields[1]
+        local b = fields[2]
+        local c = fields[3]
         if a and a ~= "" then
-            out[a] = {
-                header = { kill = b or "", cc = c or "" },
-                roles = { PRIEST = d or "", ROGUE = e or "", MAGE = f or "" },
+            local roles = {}
+            for i, token in ipairs(ROLE_TOKENS) do
+                roles[token] = unesc(fields[3 + i])
+            end
+            local compKey = unesc(a)
+            out[compKey] = {
+                header = { kill = unesc(b), cc = unesc(c) },
+                roles = roles,
             }
         end
     end
@@ -297,17 +443,41 @@ local function TryDetectAndUpdate()
     end
 end
 
-local function PrintHelp()
-    print("|cff33ff99ArenaSticky|r commands:")
-    print("  /asticky help")
-    print("  /asticky test wld")
-    print("  /asticky edit | show | hide | sync | request")
-    print("  Works in 2v2 and 3v3 (auto-detect enemy comp size).")
-    print("  Aliases: wld hpr thug rmp")
-    print("  Or full key: /asticky test druid-warlock-warrior")
+local function RebuildGuidUnitMap()
+    wipe(ArenaSticky.guidToUnit)
+    for i = 1, 3 do
+        local unit = "arena" .. i
+        if UnitExists(unit) then
+            local guid = UnitGUID(unit)
+            if guid then
+                ArenaSticky.guidToUnit[guid] = unit
+            end
+        end
+    end
 end
 
-SLASH_ARENASTICKY1 = "/asticky"
+local function HandleCombatLog()
+    local _, subevent, _, sourceGUID, _, _, _, _, _, _, _, spellName = CombatLogGetCurrentEventInfo()
+    if not sourceGUID or not spellName then return end
+    local unit = ArenaSticky.guidToUnit[sourceGUID]
+    if not unit then return end
+    local token = SPELL_SPEC_TOKEN[spellName]
+    if token then
+        ArenaSticky.specByGuid[sourceGUID] = token
+    end
+end
+
+local function PrintHelp()
+    print("|cff33ff99ArenaSticky|r commands:")
+    print("  /as help")
+    print("  /as test wld")
+    print("  /as edit | show | hide | sync | request")
+    print("  Works in 2v2 and 3v3 (auto-detect enemy comp size).")
+    print("  Aliases: wld hpr thug rmp")
+    print("  Or full key: /as test druid-warlock-warrior")
+end
+
+SLASH_ARENASTICKY1 = "/as"
 SlashCmdList["ARENASTICKY"] = function(msg)
     msg = msg or ""
     local lower = msg:lower()
@@ -347,8 +517,8 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     if a == "test" then
         local alias = (b or ""):gsub("^%s+", ""):gsub("%s+$", "")
         if alias == "" then
-            print("|cff33ff99ArenaSticky|r: Usage: |cff00ccff/asticky test <alias>|r")
-            print("  Try |cff00ccff/asticky help|r for full command list.")
+            print("|cff33ff99ArenaSticky|r: Usage: |cff00ccff/as test <alias>|r")
+            print("  Try |cff00ccff/as help|r for full command list.")
             return
         end
         local compKey = ResolveTestAlias(alias)
@@ -393,6 +563,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "ARENA_OPPONENT_UPDATE" then
         if IsActiveBattlefieldArena() then
+            RebuildGuidUnitMap()
             C_Timer.After(0.2, TryDetectAndUpdate)
         end
 
@@ -402,6 +573,20 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
         if not IsActiveBattlefieldArena() then
             ArenaSticky.mainFrame:Hide()
         end
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        HandleCombatLog()
+
+    elseif event == "UNIT_AURA" then
+        local unit = ...
+        if unit and unit:match("^arena%d$") then
+            local guid = UnitGUID(unit)
+            if guid then
+                local auraToken = DetectSpecFromAuras(unit)
+                if auraToken then
+                    ArenaSticky.specByGuid[guid] = auraToken
+                end
+            end
+        end
     end
 end)
 
@@ -409,4 +594,6 @@ ArenaSticky.frame:RegisterEvent("ADDON_LOADED")
 ArenaSticky.frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 ArenaSticky.frame:RegisterEvent("ARENA_OPPONENT_UPDATE")
 ArenaSticky.frame:RegisterEvent("CHAT_MSG_ADDON")
+ArenaSticky.frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+ArenaSticky.frame:RegisterEvent("UNIT_AURA")
 ArenaSticky.frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")

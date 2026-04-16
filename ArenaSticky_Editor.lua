@@ -1,9 +1,35 @@
 ArenaSticky = ArenaSticky or {}
 
 local CLASS_ORDER = {
-    "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE",
-    "WARLOCK", "DRUID",
+    "WARRIOR", "HUNTER", "ROGUE", "MAGE", "WARLOCK",
+    "RET", "HPAL",
+    "RSHAM", "ELE", "ENH",
+    "DISC", "SHADOW",
+    "RESTO", "BOOMY", "FERAL",
+    -- Legacy/base tokens (for older saved comps/notes)
+    "PALADIN", "SHAMAN", "PRIEST", "DRUID",
 }
+
+local COMP_SLOT_OPTIONS = {
+    "WARRIOR", "HUNTER", "ROGUE", "MAGE", "WARLOCK",
+    "RET", "HPAL",
+    "RSHAM", "ELE", "ENH",
+    "DISC", "SHADOW",
+    "RESTO", "BOOMY", "FERAL",
+    -- Legacy/base tokens (for older saved comps)
+    "PALADIN", "SHAMAN", "PRIEST", "DRUID",
+}
+
+local function NormalizeCompFromParts(parts)
+    local classes = {}
+    for _, c in ipairs(parts or {}) do
+        if c and c ~= "" and c ~= "NONE" then
+            table.insert(classes, c)
+        end
+    end
+    table.sort(classes)
+    return table.concat(classes, "-")
+end
 
 local function GetSortedCompKeys()
     local keys = {}
@@ -16,9 +42,23 @@ local function GetSortedCompKeys()
     return keys
 end
 
+local function GetCompSizeFromKey(key)
+    local count = 0
+    for _ in (key or ""):gmatch("[^-]+") do
+        count = count + 1
+    end
+    return count
+end
+
 local function LoadCompIntoEditor(f, key)
     key = (key or ""):upper()
     f.compInput:SetText(key)
+    if f.SetBracketFromKey then
+        f:SetBracketFromKey(key)
+    end
+    if f.SetCompSlotsFromKey then
+        f:SetCompSlotsFromKey(key)
+    end
     if key == "" then
         f.status:SetText("Enter a comp key first.")
         return
@@ -28,21 +68,33 @@ local function LoadCompIntoEditor(f, key)
     if not data then
         f.killInput:SetText("")
         f.ccInput:SetText("")
-        f.classNoteInput:SetText("")
+        if f.noteRows then
+            for i = 1, 3 do
+                f.noteRows[i].input:SetText("")
+            end
+        end
         f.status:SetText("No strategy exists. Fill and Save.")
         return
     end
 
     f.killInput:SetText((data.header and data.header.kill) or "")
     f.ccInput:SetText((data.header and data.header.cc) or "")
-    local selectedClass = f.selectedClass or "PRIEST"
-    f.classNoteInput:SetText((data.roles and data.roles[selectedClass]) or "")
+    if f.UpdateNoteRowsFromComp then
+        f:UpdateNoteRowsFromComp()
+    end
     f.status:SetText("Loaded " .. key)
 end
 
 local function RefreshCompDropdown(f)
     if not f.compDropdown then return end
-    local keys = GetSortedCompKeys()
+    local allKeys = GetSortedCompKeys()
+    local keys = {}
+    local expectedSize = (f.selectedBracket == "2v2") and 2 or 3
+    for _, key in ipairs(allKeys) do
+        if GetCompSizeFromKey(key) == expectedSize then
+            table.insert(keys, key)
+        end
+    end
     f.compKeys = keys
     UIDropDownMenu_Initialize(f.compDropdown, function(self, level)
         for _, key in ipairs(keys) do
@@ -59,7 +111,7 @@ local function RefreshCompDropdown(f)
     if #keys > 0 then
         UIDropDownMenu_SetText(f.compDropdown, "Select existing comp...")
     else
-        UIDropDownMenu_SetText(f.compDropdown, "No saved comps yet")
+        UIDropDownMenu_SetText(f.compDropdown, "No saved comps for " .. (f.selectedBracket or "this bracket"))
     end
 end
 
@@ -67,7 +119,7 @@ local function EnsureEditor()
     if ArenaSticky.editor then return ArenaSticky.editor end
 
     local f = CreateFrame("Frame", "ArenaStickyEditorFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate")
-    f:SetSize(620, 430)
+    f:SetSize(700, 480)
     f:SetPoint("CENTER", 120, 0)
     f:SetClampedToScreen(true)
     f:SetMovable(true)
@@ -103,8 +155,104 @@ local function EnsureEditor()
         if multiLine then
             eb:SetMultiLine(true)
             eb:SetFontObject("GameFontHighlightSmall")
+        else
+            eb:SetMultiLine(false)
+            eb:SetScript("OnEnterPressed", function(self)
+                self:ClearFocus()
+            end)
         end
         return eb
+    end
+
+    local function UpdateCompFromSlots()
+        local keyParts
+        if f.selectedBracket == "2v2" then
+            keyParts = { f.compSlot1Value, f.compSlot2Value }
+        else
+            keyParts = { f.compSlot1Value, f.compSlot2Value, f.compSlot3Value }
+        end
+        local key = NormalizeCompFromParts(keyParts)
+        f.compInput:SetText(key)
+        if f.UpdateNoteRowsFromComp then
+            f:UpdateNoteRowsFromComp()
+        end
+    end
+
+    local function BuildCompSlotDropdown(dropdown, slotName)
+        UIDropDownMenu_Initialize(dropdown, function(self, level)
+            for _, classToken in ipairs(COMP_SLOT_OPTIONS) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = classToken
+                info.arg1 = classToken
+                info.func = function(_, selectedClass)
+                    f[slotName] = selectedClass
+                    UIDropDownMenu_SetSelectedName(dropdown, selectedClass)
+                    UpdateCompFromSlots()
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+    end
+
+    f.SetCompSlotsFromKey = function(self, key)
+        local parts = {}
+        for p in (key or ""):gmatch("[^-]+") do
+            table.insert(parts, p:upper())
+        end
+        self.compSlot1Value = parts[1] or "PRIEST"
+        self.compSlot2Value = parts[2] or "ROGUE"
+        self.compSlot3Value = parts[3] or "MAGE"
+        UIDropDownMenu_SetSelectedName(self.compSlot1, self.compSlot1Value)
+        UIDropDownMenu_SetSelectedName(self.compSlot2, self.compSlot2Value)
+        UIDropDownMenu_SetSelectedName(self.compSlot3, self.compSlot3Value)
+        if self.noteRows then
+            self.noteRows[1].classValue = self.compSlot1Value
+            self.noteRows[2].classValue = self.compSlot2Value
+            self.noteRows[3].classValue = self.compSlot3Value
+            UIDropDownMenu_SetSelectedName(self.noteRows[1].dropdown, self.noteRows[1].classValue)
+            UIDropDownMenu_SetSelectedName(self.noteRows[2].dropdown, self.noteRows[2].classValue)
+            UIDropDownMenu_SetSelectedName(self.noteRows[3].dropdown, self.noteRows[3].classValue)
+        end
+    end
+
+    f.UpdateVisibleNoteRows = function(self)
+        local count = (self.selectedBracket == "2v2") and 2 or 3
+        for i = 1, 3 do
+            if i <= count then
+                self.noteRows[i].label:Show()
+                self.noteRows[i].dropdown:Show()
+                self.noteRows[i].input:Show()
+            else
+                self.noteRows[i].label:Hide()
+                self.noteRows[i].dropdown:Hide()
+                self.noteRows[i].input:Hide()
+            end
+        end
+    end
+
+    f.UpdateNoteRowsFromComp = function(self)
+        local key = (self.compInput:GetText() or ""):upper()
+        local data = ArenaStickyDB and ArenaStickyDB.strategies and ArenaStickyDB.strategies[key]
+        for i = 1, 3 do
+            local row = self.noteRows[i]
+            local classToken = row.classValue or "PRIEST"
+            row.input:SetText((data and data.roles and data.roles[classToken]) or "")
+        end
+    end
+
+    f.SetBracketFromKey = function(self, key)
+        local size = GetCompSizeFromKey(key)
+        local bracket = (size >= 3) and "3v3" or "2v2"
+        self.selectedBracket = bracket
+        UIDropDownMenu_SetSelectedName(self.bracketDropdown, bracket)
+        if bracket == "2v2" then
+            self.compSlot3:Hide()
+        else
+            self.compSlot3:Show()
+        end
+        if self.UpdateVisibleNoteRows then
+            self:UpdateVisibleNoteRows()
+        end
     end
 
     MakeLabel("Comp Key (e.g. DRUID-WARLOCK-WARRIOR)", 12, -40)
@@ -115,36 +263,93 @@ local function EnsureEditor()
     UIDropDownMenu_SetWidth(f.compDropdown, 220)
     UIDropDownMenu_SetText(f.compDropdown, "Select existing comp...")
 
-    MakeLabel("Kill Target", 12, -90)
-    f.killInput = MakeInput(170, 24, 12, -108, false)
-
-    MakeLabel("CC Target", 200, -90)
-    f.ccInput = MakeInput(170, 24, 200, -108, false)
-
-    MakeLabel("Class Note (dynamic by your class)", 12, -140)
-    f.classDropdown = CreateFrame("Frame", "ArenaStickyClassDropdown", f, "UIDropDownMenuTemplate")
-    f.classDropdown:SetPoint("TOPLEFT", 220, -146)
-    UIDropDownMenu_SetWidth(f.classDropdown, 150)
-    f.selectedClass = select(2, UnitClass("player")) or "PRIEST"
-
-    UIDropDownMenu_Initialize(f.classDropdown, function(self, level)
-        for _, classToken in ipairs(CLASS_ORDER) do
+    MakeLabel("Bracket", 12, -90)
+    f.bracketDropdown = CreateFrame("Frame", "ArenaStickyBracketDropdown", f, "UIDropDownMenuTemplate")
+    f.bracketDropdown:SetPoint("TOPLEFT", 0, -102)
+    UIDropDownMenu_SetWidth(f.bracketDropdown, 90)
+    UIDropDownMenu_Initialize(f.bracketDropdown, function(self, level)
+        for _, bracket in ipairs({ "2v2", "3v3" }) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = classToken
-            info.arg1 = classToken
-            info.func = function(_, selectedClass)
-                f.selectedClass = selectedClass
-                UIDropDownMenu_SetSelectedName(f.classDropdown, selectedClass)
-                local key = (f.compInput:GetText() or ""):upper()
-                local data = ArenaStickyDB.strategies[key]
-                f.classNoteInput:SetText((data and data.roles and data.roles[selectedClass]) or "")
+            info.text = bracket
+            info.arg1 = bracket
+            info.func = function(_, selectedBracket)
+                f.selectedBracket = selectedBracket
+                UIDropDownMenu_SetSelectedName(f.bracketDropdown, selectedBracket)
+                if selectedBracket == "2v2" then
+                    f.compSlot3:Hide()
+                else
+                    f.compSlot3:Show()
+                end
+                if f.UpdateVisibleNoteRows then
+                    f:UpdateVisibleNoteRows()
+                end
+                UpdateCompFromSlots()
+                RefreshCompDropdown(f)
             end
             UIDropDownMenu_AddButton(info, level)
         end
     end)
-    UIDropDownMenu_SetSelectedName(f.classDropdown, f.selectedClass)
+    f.selectedBracket = "3v3"
+    UIDropDownMenu_SetSelectedName(f.bracketDropdown, f.selectedBracket)
 
-    f.classNoteInput = MakeInput(590, 248, 12, -172, true)
+    MakeLabel("Build Comp from Class Dropdowns", 185, -90)
+    f.compSlot1 = CreateFrame("Frame", "ArenaStickyCompSlot1Dropdown", f, "UIDropDownMenuTemplate")
+    f.compSlot1:SetPoint("TOPLEFT", 175, -102)
+    UIDropDownMenu_SetWidth(f.compSlot1, 130)
+    f.compSlot2 = CreateFrame("Frame", "ArenaStickyCompSlot2Dropdown", f, "UIDropDownMenuTemplate")
+    f.compSlot2:SetPoint("TOPLEFT", 335, -102)
+    UIDropDownMenu_SetWidth(f.compSlot2, 130)
+    f.compSlot3 = CreateFrame("Frame", "ArenaStickyCompSlot3Dropdown", f, "UIDropDownMenuTemplate")
+    f.compSlot3:SetPoint("TOPLEFT", 495, -102)
+    UIDropDownMenu_SetWidth(f.compSlot3, 130)
+
+    BuildCompSlotDropdown(f.compSlot1, "compSlot1Value")
+    BuildCompSlotDropdown(f.compSlot2, "compSlot2Value")
+    BuildCompSlotDropdown(f.compSlot3, "compSlot3Value")
+    f.compSlot1Value = "PRIEST"
+    f.compSlot2Value = "ROGUE"
+    f.compSlot3Value = "MAGE"
+    UIDropDownMenu_SetSelectedName(f.compSlot1, f.compSlot1Value)
+    UIDropDownMenu_SetSelectedName(f.compSlot2, f.compSlot2Value)
+    UIDropDownMenu_SetSelectedName(f.compSlot3, f.compSlot3Value)
+
+    MakeLabel("Kill Target", 12, -146)
+    f.killInput = MakeInput(170, 24, 12, -164, false)
+
+    MakeLabel("CC Target", 200, -146)
+    f.ccInput = MakeInput(170, 24, 200, -164, false)
+
+    MakeLabel("Class Notes (per class in this comp)", 12, -196)
+    f.noteRows = {}
+    local rowY = { -216, -292, -368 }
+    for i = 1, 3 do
+        local row = {}
+        row.label = MakeLabel(("Class %d"):format(i), 12, rowY[i])
+        row.dropdown = CreateFrame("Frame", "ArenaStickyClassNoteDropdown" .. i, f, "UIDropDownMenuTemplate")
+        row.dropdown:SetPoint("TOPLEFT", 0, rowY[i] - 12)
+        UIDropDownMenu_SetWidth(row.dropdown, 130)
+        row.input = MakeInput(500, 24, 190, rowY[i] - 12, false)
+        row.classValue = (i == 1 and f.compSlot1Value) or (i == 2 and f.compSlot2Value) or f.compSlot3Value
+
+        UIDropDownMenu_Initialize(row.dropdown, function(self, level)
+            for _, classToken in ipairs(CLASS_ORDER) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = classToken
+                info.arg1 = classToken
+                info.func = function(_, selectedClass)
+                    row.classValue = selectedClass
+                    UIDropDownMenu_SetSelectedName(row.dropdown, selectedClass)
+                    local key = (f.compInput:GetText() or ""):upper()
+                    local data = ArenaStickyDB.strategies[key]
+                    row.input:SetText((data and data.roles and data.roles[selectedClass]) or "")
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        UIDropDownMenu_SetSelectedName(row.dropdown, row.classValue)
+        f.noteRows[i] = row
+    end
+    f:UpdateVisibleNoteRows()
 
     local loadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     loadBtn:SetSize(80, 24)
@@ -163,7 +368,7 @@ local function EnsureEditor()
 
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     closeBtn:SetSize(80, 24)
-    closeBtn:SetPoint("RIGHT", -12, 12)
+    closeBtn:SetPoint("BOTTOMRIGHT", -12, 12)
     closeBtn:SetText("Close")
 
     f.status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -188,8 +393,14 @@ local function EnsureEditor()
             },
             roles = (ArenaStickyDB.strategies[key] and ArenaStickyDB.strategies[key].roles) or {},
         }
-        local editClass = f.selectedClass or "PRIEST"
-        ArenaStickyDB.strategies[key].roles[editClass] = f.classNoteInput:GetText() or ""
+        local rowCount = (f.selectedBracket == "2v2") and 2 or 3
+        for i = 1, rowCount do
+            local row = f.noteRows[i]
+            local editClass = row.classValue
+            if editClass and editClass ~= "" then
+                ArenaStickyDB.strategies[key].roles[editClass] = row.input:GetText() or ""
+            end
+        end
         ArenaStickyDB.version = (ArenaStickyDB.version or 1) + 1
         ArenaStickyDB.lastUpdated = time()
         RefreshCompDropdown(f)
