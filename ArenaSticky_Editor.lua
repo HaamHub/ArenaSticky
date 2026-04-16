@@ -6,8 +6,6 @@ local CLASS_ORDER = {
     "RSHAM", "ELE", "ENH",
     "DISC", "SHADOW",
     "RESTO", "BOOMY", "FERAL",
-    -- Legacy/base tokens (for older saved comps/notes)
-    "PALADIN", "SHAMAN", "PRIEST", "DRUID",
 }
 
 local COMP_SLOT_OPTIONS = {
@@ -16,9 +14,25 @@ local COMP_SLOT_OPTIONS = {
     "RSHAM", "ELE", "ENH",
     "DISC", "SHADOW",
     "RESTO", "BOOMY", "FERAL",
-    -- Legacy/base tokens (for older saved comps)
-    "PALADIN", "SHAMAN", "PRIEST", "DRUID",
 }
+
+local function GetPlayerDefaultNoteToken()
+    local _, class = UnitClass("player")
+    if class == "PRIEST" then
+        return "DISC"
+    end
+    return nil
+end
+
+local function GetPartyDefaultNoteToken(unit)
+    if not unit or not UnitExists(unit) then return nil end
+    local _, class = UnitClass(unit)
+    if class == "PRIEST" then return "DISC" end
+    if class == "DRUID" then return "RESTO" end
+    if class == "SHAMAN" then return "RSHAM" end
+    if class == "PALADIN" then return "HPAL" end
+    return class
+end
 
 local function NormalizeCompFromParts(parts)
     local classes = {}
@@ -199,20 +213,12 @@ local function EnsureEditor()
         for p in (key or ""):gmatch("[^-]+") do
             table.insert(parts, p:upper())
         end
-        self.compSlot1Value = parts[1] or "PRIEST"
+        self.compSlot1Value = parts[1] or "DISC"
         self.compSlot2Value = parts[2] or "ROGUE"
         self.compSlot3Value = parts[3] or "MAGE"
         UIDropDownMenu_SetSelectedName(self.compSlot1, self.compSlot1Value)
         UIDropDownMenu_SetSelectedName(self.compSlot2, self.compSlot2Value)
         UIDropDownMenu_SetSelectedName(self.compSlot3, self.compSlot3Value)
-        if self.noteRows then
-            self.noteRows[1].classValue = self.compSlot1Value
-            self.noteRows[2].classValue = self.compSlot2Value
-            self.noteRows[3].classValue = self.compSlot3Value
-            UIDropDownMenu_SetSelectedName(self.noteRows[1].dropdown, self.noteRows[1].classValue)
-            UIDropDownMenu_SetSelectedName(self.noteRows[2].dropdown, self.noteRows[2].classValue)
-            UIDropDownMenu_SetSelectedName(self.noteRows[3].dropdown, self.noteRows[3].classValue)
-        end
     end
 
     f.UpdateVisibleNoteRows = function(self)
@@ -235,7 +241,7 @@ local function EnsureEditor()
         local data = ArenaStickyDB and ArenaStickyDB.strategies and ArenaStickyDB.strategies[key]
         for i = 1, 3 do
             local row = self.noteRows[i]
-            local classToken = row.classValue or "PRIEST"
+            local classToken = row.classValue or "DISC"
             row.input:SetText((data and data.roles and data.roles[classToken]) or "")
         end
     end
@@ -255,7 +261,7 @@ local function EnsureEditor()
         end
     end
 
-    MakeLabel("Comp Key (e.g. DRUID-WARLOCK-WARRIOR)", 12, -40)
+    MakeLabel("Comp Key (e.g. RESTO-WARLOCK-WARRIOR)", 12, -40)
     f.compInput = MakeInput(340, 24, 12, -58, false)
     MakeLabel("Or select saved comp", 370, -40)
     f.compDropdown = CreateFrame("Frame", "ArenaStickyCompDropdown", f, "UIDropDownMenuTemplate")
@@ -306,7 +312,7 @@ local function EnsureEditor()
     BuildCompSlotDropdown(f.compSlot1, "compSlot1Value")
     BuildCompSlotDropdown(f.compSlot2, "compSlot2Value")
     BuildCompSlotDropdown(f.compSlot3, "compSlot3Value")
-    f.compSlot1Value = "PRIEST"
+    f.compSlot1Value = "DISC"
     f.compSlot2Value = "ROGUE"
     f.compSlot3Value = "MAGE"
     UIDropDownMenu_SetSelectedName(f.compSlot1, f.compSlot1Value)
@@ -329,7 +335,10 @@ local function EnsureEditor()
         row.dropdown:SetPoint("TOPLEFT", 0, rowY[i] - 12)
         UIDropDownMenu_SetWidth(row.dropdown, 130)
         row.input = MakeInput(500, 24, 190, rowY[i] - 12, false)
-        row.classValue = (i == 1 and f.compSlot1Value) or (i == 2 and f.compSlot2Value) or f.compSlot3Value
+        row.classValue =
+            (i == 1 and (GetPlayerDefaultNoteToken() or "DISC")) or
+            (i == 2 and (GetPartyDefaultNoteToken("party1") or f.compSlot2Value)) or
+            (GetPartyDefaultNoteToken("party2") or f.compSlot3Value)
 
         UIDropDownMenu_Initialize(row.dropdown, function(self, level)
             for _, classToken in ipairs(CLASS_ORDER) do
@@ -339,6 +348,7 @@ local function EnsureEditor()
                 info.func = function(_, selectedClass)
                     row.classValue = selectedClass
                     UIDropDownMenu_SetSelectedName(row.dropdown, selectedClass)
+                    UIDropDownMenu_SetText(row.dropdown, selectedClass)
                     local key = (f.compInput:GetText() or ""):upper()
                     local data = ArenaStickyDB.strategies[key]
                     row.input:SetText((data and data.roles and data.roles[selectedClass]) or "")
@@ -347,6 +357,7 @@ local function EnsureEditor()
             end
         end)
         UIDropDownMenu_SetSelectedName(row.dropdown, row.classValue)
+        UIDropDownMenu_SetText(row.dropdown, row.classValue)
         f.noteRows[i] = row
     end
     f:UpdateVisibleNoteRows()
@@ -435,5 +446,26 @@ end
 function ArenaSticky.OpenEditor()
     local f = EnsureEditor()
     RefreshCompDropdown(f)
+    if f.noteRows and f.noteRows[1] then
+        local playerToken = GetPlayerDefaultNoteToken() or "DISC"
+        f.noteRows[1].classValue = playerToken
+        UIDropDownMenu_SetSelectedName(f.noteRows[1].dropdown, playerToken)
+        UIDropDownMenu_SetText(f.noteRows[1].dropdown, playerToken)
+        if f.noteRows[2] then
+            local party1Token = GetPartyDefaultNoteToken("party1") or f.compSlot2Value
+            f.noteRows[2].classValue = party1Token
+            UIDropDownMenu_SetSelectedName(f.noteRows[2].dropdown, party1Token)
+            UIDropDownMenu_SetText(f.noteRows[2].dropdown, party1Token)
+        end
+        if f.noteRows[3] then
+            local party2Token = GetPartyDefaultNoteToken("party2") or f.compSlot3Value
+            f.noteRows[3].classValue = party2Token
+            UIDropDownMenu_SetSelectedName(f.noteRows[3].dropdown, party2Token)
+            UIDropDownMenu_SetText(f.noteRows[3].dropdown, party2Token)
+        end
+        if f.UpdateNoteRowsFromComp then
+            f:UpdateNoteRowsFromComp()
+        end
+    end
     f:Show()
 end

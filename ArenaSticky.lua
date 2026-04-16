@@ -4,7 +4,6 @@ local PREFIX = "ARENASTICKY1"
 ArenaSticky = ArenaSticky or {}
 ArenaSticky.frame = CreateFrame("Frame")
 ArenaSticky.enemyClasses = {}
-ArenaSticky.playerRole = nil
 ArenaSticky.currentCompKey = nil
 ArenaSticky.specByGuid = ArenaSticky.specByGuid or {}
 ArenaSticky.guidToUnit = ArenaSticky.guidToUnit or {}
@@ -50,9 +49,6 @@ local SPELL_SPEC_TOKEN = {
 }
 
 local COMP_ALIASES = {
-    wld = "RESTO-WARLOCK-WARRIOR",
-    hpr = "DISC-HUNTER-ROGUE",
-    thug = "DISC-HUNTER-ROGUE",
     rmp = "DISC-MAGE-ROGUE",
 }
 
@@ -68,6 +64,17 @@ end
 local function NormalizeCompKey(classes)
     table.sort(classes)
     return table.concat(classes, "-")
+end
+
+local function MergeMissingStrategies(dest, src)
+    if not src then return dest end
+    dest = dest or {}
+    for key, strat in pairs(src) do
+        if dest[key] == nil then
+            dest[key] = DeepCopy(strat)
+        end
+    end
+    return dest
 end
 
 local function ToLegacyClassToken(token)
@@ -87,6 +94,24 @@ local function ToLegacyCompKey(compKey)
     return NormalizeCompKey(parts)
 end
 
+local function FromLegacyClassToken(token)
+    token = token and token:upper() or token
+    if token == "DRUID" then return "RESTO" end
+    if token == "SHAMAN" then return "RSHAM" end
+    if token == "PRIEST" then return "DISC" end
+    if token == "PALADIN" then return "HPAL" end
+    return token
+end
+
+local function FromLegacyCompKey(compKey)
+    if not compKey or compKey == "" then return compKey end
+    local parts = {}
+    for p in compKey:gmatch("[^-]+") do
+        table.insert(parts, FromLegacyClassToken(p))
+    end
+    return NormalizeCompKey(parts)
+end
+
 local function ResolveTestAlias(arg)
     if not arg or arg == "" then return nil, arg end
     local clean = arg:lower():gsub("%s+", "")
@@ -96,13 +121,212 @@ local function ResolveTestAlias(arg)
             table.insert(parts, p:upper())
         end
         if #parts >= 2 then
-            return NormalizeCompKey(parts), clean
+            local key = NormalizeCompKey(parts)
+            return FromLegacyCompKey(key), clean
         end
     end
     local key = COMP_ALIASES[clean]
     if key then return key, clean end
     return nil, clean
 end
+
+local DEFAULT_STRATEGIES = {
+    -- 3v3: RMP (you) vs common TBC comps
+    ["RESTO-WARLOCK-WARRIOR"] = {
+        header = { kill = "Warlock", cc = "Resto Druid" },
+        roles = {
+            DISC = "Max pillar. Dispel fear only. Trinket real cross, then reset/drink.",
+            ROGUE = "Open lock. Kidney only on druid CC. Missed go = full reset.",
+            MAGE = "Sheep druid on go. Peel warrior. CS fear/heals on setup.",
+        },
+    },
+    ["DISC-MAGE-ROGUE"] = {
+        header = { kill = "Mage or Disc", cc = "whoever is not kill target" },
+        roles = {
+            DISC = "No early trinket overlap. Fear off sheep. PI only real goes.",
+            ROGUE = "Sap disc if free. Stop their opener. Save vanish for re-go.",
+            MAGE = "Win poly race. Counter-go only on full disc CC. Peel after.",
+        },
+    },
+    ["DISC-HUNTER-ROGUE"] = {
+        header = { kill = "Hunter", cc = "Disc" },
+        roles = {
+            DISC = "Avoid sap-trap line. Trinket kill setups only. Dispel trap smart.",
+            ROGUE = "Control rogue first, then go hunter with disc CC.",
+            MAGE = "Peel first. Poly disc on go. Burst only if hunter is stuck.",
+        },
+    },
+    ["RESTO-ROGUE-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Resto Druid" },
+        roles = {
+            DISC = "Respect rogue swap. Dispel coil/fear only. If rogue resets, drink.",
+            ROGUE = "Open lock. Kidney on druid CC. Blind druid after trinket.",
+            MAGE = "Sheep druid. Peel rogue. CS lock on kill go.",
+        },
+    },
+    ["RSHAM-ROGUE-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "RSham" },
+        roles = {
+            DISC = "Pre-shield purge swap. Fear shaman on go. Conserve mana.",
+            ROGUE = "Open lock. Kick fear/heals. Blind shaman on trinket.",
+            MAGE = "Sheep shaman on go. Peel rogue. CS lock on setup.",
+        },
+    },
+    ["RSHAM-SHADOW-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "RSham" },
+        roles = {
+            DISC = "Respect rot. Drink fast. Dispel VT/fear only when needed.",
+            ROGUE = "Go lock. Kick fear. Kidney on shaman CC. Reset often.",
+            MAGE = "Sheep shaman on go. CS lock. Peel shadow between goes.",
+        },
+    },
+    ["RSHAM-WARLOCK-WARRIOR"] = {
+        header = { kill = "Warlock", cc = "RSham" },
+        roles = {
+            DISC = "Live first bridge. Trinket lethal overlap only. Fear shaman on go.",
+            ROGUE = "Open lock. Force CDs early. Reset if warrior gets free uptime.",
+            MAGE = "Sheep shaman on go. Peel warrior all game. CS fear/heals.",
+        },
+    },
+    ["ELE-RESTO-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Resto Druid/Shaman" },
+        roles = {
+            DISC = "Never play open. Fear healer on go. Dispel key CC only.",
+            ROGUE = "Open lock. Short goes. Swap ele only if overextended.",
+            MAGE = "Peel and line first. CS lock/healer on go. Keep ele slowed.",
+        },
+    },
+    ["DISC-RESTO-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "Disc" },
+        roles = {
+            DISC = "Live warrior go. Fear disc on setup. Save trinket for real swap.",
+            ROGUE = "Go warrior. Kidney on disc CC. Reset if warrior sticks.",
+            MAGE = "Peel warrior. Poly disc on go. Slow all game.",
+        },
+    },
+    ["DISC-RESTO-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Disc" },
+        roles = {
+            DISC = "Line dots. Fear disc on go. Dispel fear/dots only when needed.",
+            ROGUE = "Go lock. Kick fear. Kidney on disc CC. Reset after go.",
+            MAGE = "Poly disc on go. CS lock. Line dots between goes.",
+        },
+    },
+    ["DISC-ROGUE-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Disc" },
+        roles = {
+            DISC = "Respect rogue swap. Fear disc on go. Dispel fear smart.",
+            ROGUE = "Open lock. Stop rogue first if needed. Blind disc on trinket.",
+            MAGE = "Peel rogue. Poly disc on go. CS lock on setup.",
+        },
+    },
+    ["RET-RSHAM-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "RSham" },
+        roles = {
+            DISC = "Respect burst. Fear sham on go. Trinket only real overlap.",
+            ROGUE = "Go warrior. Kidney on sham CC. Reset after cooldowns.",
+            MAGE = "Peel warrior/ret. Sheep sham on go. Keep warrior slowed.",
+        },
+    },
+    ["MAGE-RESTO-WARRIOR"] = {
+        header = { kill = "Mage", cc = "Resto Druid" },
+        roles = {
+            DISC = "Do not overtrade on mage go. Fear druid on setup.",
+            ROGUE = "Open mage often. Kidney on druid CC. Peel warrior after.",
+            MAGE = "Win poly race. Sheep druid on go. Slow warrior all game.",
+        },
+    },
+    ["ENH-HPAL-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "HPal" },
+        roles = {
+            DISC = "Respect double melee burst. Fear pal on go. Save trinket.",
+            ROGUE = "Go warrior. Kidney on pal CC. Reset after wall/freedom.",
+            MAGE = "Peel both melee. Poly pal on go. Root warrior often.",
+        },
+    },
+    ["ENH-RESTO-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "Resto Druid" },
+        roles = {
+            DISC = "Play pillar. Fear druid on go. Trinket enh+warrior overlap.",
+            ROGUE = "Go warrior. Kidney on druid CC. Reset if train is free.",
+            MAGE = "Peel enh/warrior. Sheep druid on go. Slow both melee.",
+        },
+    },
+    ["ENH-RSHAM-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "RSham" },
+        roles = {
+            DISC = "Respect purge burst. Fear sham on go. Save trinket for kill.",
+            ROGUE = "Go warrior. Kidney on sham CC. Reset after burst.",
+            MAGE = "Peel both melee. Sheep sham on go. Keep warrior slowed.",
+        },
+    },
+
+    -- 2v2: Disc/Mage, Rogue/Mage, Disc/Rogue vs common TBC comps
+    ["DISC-ROGUE"] = {
+        header = { kill = "Disc or Rogue" , cc = "off-target" },
+        roles = {
+            DISC = "Live opener. Fear off rogue control. Reset early if needed.",
+            ROGUE = "Disc if free, rogue if not. Force CDs fast. Save vanish.",
+            MAGE = "Peel rogue first. Burst only on disc control.",
+        },
+    },
+    ["DISC-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Disc" },
+        roles = {
+            DISC = "Dispel key dots/fears only. Stay active; don’t rot.",
+            ROGUE = "Go lock. Kick fear. Force disc trinket, then blind.",
+            MAGE = "Sheep disc on go. Line dots. CS lock when exposed.",
+        },
+    },
+    ["HPAL-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "HPal" },
+        roles = {
+            DISC = "Do not panic trinket. Fear pal on go. Make warrior overextend.",
+            ROGUE = "Control warrior first. Kidney on pal CC. Reset often.",
+            MAGE = "Perma-slow warrior. Poly pal on go. Drink if fully kited.",
+        },
+    },
+    ["RESTO-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "Resto Druid" },
+        roles = {
+            DISC = "Don’t get dragged. Fear druid on real go. Save trinket for bash.",
+            ROGUE = "Kidney warrior on druid CC. Reset often. Don’t chase druid.",
+            MAGE = "Perma-slow warrior. Sheep druid only when ready to go.",
+        },
+    },
+    ["RSHAM-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "RSham" },
+        roles = {
+            DISC = "Mana matters. Fear shaman on go. Watch warrior swap.",
+            ROGUE = "Usually go warrior. Kidney on shaman CC. Reset if trained.",
+            MAGE = "Peel warrior forever. Sheep shaman on go. CS heals/reconnect.",
+        },
+    },
+    ["DISC-HUNTER"] = {
+        header = { kill = "Hunter", cc = "Disc" },
+        roles = {
+            DISC = "Respect trap. Trinket kill chain only. Fear disc on go.",
+            ROGUE = "Stick hunter. Step-kick/blind disc. Reset if hunter kites free.",
+            MAGE = "Pin hunter. Control disc every go. Slow/nova matter.",
+        },
+    },
+    ["MAGE-ROGUE"] = {
+        header = { kill = "Mage or Rogue", cc = "off-target" },
+        roles = {
+            DISC = "Live opener. Trinket lethal only. Dispel + fear to break reset.",
+            ROGUE = "Opener decides game. Control rogue first unless mage is free.",
+            MAGE = "Live first. Win CC war. CS real go. Block early if needed.",
+        },
+    },
+    ["RESTO-ROGUE"] = {
+        header = { kill = "Rogue", cc = "Resto Druid" },
+        roles = {
+            DISC = "Live opener. Fear druid after. Save CDs for rogue all-in.",
+            ROGUE = "Go rogue. Control druid after trinket. Don’t chase druid.",
+            MAGE = "Peel rogue always. Only hit druid on real go windows.",
+        },
+    },
+}
 
 local function EnsureDB()
     ArenaStickyDB = ArenaStickyDB or {}
@@ -119,30 +343,7 @@ local function EnsureDB()
     }
 
     -- Shared strategy pack (editable + synced)
-    ArenaStickyDB.strategies = ArenaStickyDB.strategies or {
-        ["DRUID-WARLOCK-WARRIOR"] = {
-            header = {
-                kill = "Warlock",
-                cc = "Druid",
-            },
-            roles = {
-                PRIEST = "Play max pillar. Call \"not safe\" before go. Dispel only kill windows and emergency CC breaks.",
-                ROGUE = "Open lock. Kidney only with druid CC confirmed. Reset after failed go.",
-                MAGE = "Sheep druid on go. Peel warrior reconnect after every push. No neutral overtrade.",
-            },
-        },
-        ["HUNTER-PRIEST-ROGUE"] = {
-            header = {
-                kill = "Hunter",
-                cc = "Priest",
-            },
-            roles = {
-                PRIEST = "Avoid sap/fear path in opener. Save trinket for lethal rogue setups.",
-                ROGUE = "Control enemy rogue early. Kidney hunter with priest cross-CC.",
-                MAGE = "Peel rogue first when priest is in CC. Burst hunter only in clean windows.",
-            },
-        },
-    }
+    ArenaStickyDB.strategies = MergeMissingStrategies(ArenaStickyDB.strategies, DEFAULT_STRATEGIES)
 end
 
 local function GetMyRole()
@@ -215,15 +416,38 @@ local function CreateMainFrame()
     local f = CreateFrame("Frame", "ArenaStickyMainFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate")
     f:SetSize(320, 200)
     f:SetPoint("CENTER")
+    if f.SetClampedToScreen then
+        f:SetClampedToScreen(true)
+    end
     f:SetMovable(true)
+    if f.SetResizable then
+        f:SetResizable(true)
+    end
+    if f.SetMinResize then
+        f:SetMinResize(260, 140)
+    end
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local p, _, _, x, y = self:GetPoint()
+        local _, _, _, x, y = self:GetPoint()
         ArenaStickyDB.window.x = x
         ArenaStickyDB.window.y = y
+        ArenaStickyDB.window.width = self:GetWidth()
+        ArenaStickyDB.window.height = self:GetHeight()
+    end)
+    f:SetScript("OnSizeChanged", function(self, width, height)
+        width = math.max(width or 320, 260)
+        height = math.max(height or 200, 140)
+        ArenaStickyDB.window.width = width
+        ArenaStickyDB.window.height = height
+        if ArenaSticky.headerText then
+            ArenaSticky.headerText:SetWidth(width - 25)
+        end
+        if ArenaSticky.bodyText then
+            ArenaSticky.bodyText:SetWidth(width - 25)
+        end
     end)
 
     f:SetBackdrop({
@@ -255,13 +479,34 @@ local function CreateMainFrame()
 
     local footer = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     footer:SetPoint("BOTTOMLEFT", 12, 8)
-    footer:SetText("Type /as edit to modify")
+    footer:SetText("Type /as edit to modify. Drag bottom-right to resize.")
+
+    local resize = nil
+    if f.StartSizing and f.StopMovingOrSizing then
+        resize = CreateFrame("Button", nil, f)
+        resize:SetPoint("BOTTOMRIGHT", -6, 6)
+        resize:SetSize(16, 16)
+        resize:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        resize:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+        resize:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+        resize:SetScript("OnMouseDown", function()
+            f:StartSizing("BOTTOMRIGHT")
+        end)
+        resize:SetScript("OnMouseUp", function()
+            f:StopMovingOrSizing()
+            ArenaStickyDB.window.width = f:GetWidth()
+            ArenaStickyDB.window.height = f:GetHeight()
+        end)
+    else
+        footer:SetText("Type /as edit to modify.")
+    end
 
     ArenaSticky.mainFrame = f
     ArenaSticky.titleText = title
     ArenaSticky.headerText = header
     ArenaSticky.bodyText = body
     ArenaSticky.footerText = footer
+    ArenaSticky.resizeHandle = resize
 end
 
 local function ApplyWindowSettings()
@@ -296,15 +541,25 @@ local function ParseEnemyCompFromArenaUnits()
     return nil
 end
 
-local function UpdateNotesForComp(compKey)
-    ArenaSticky.currentCompKey = compKey
-    local role = ArenaSticky.playerRole or GetMyRole()
-    if not role then
-        ArenaSticky.headerText:SetText("Kill: ?  |  CC: ?")
-        ArenaSticky.bodyText:SetText("Unsupported class for role notes.")
-        ArenaSticky.mainFrame:Show()
-        return
+local function GetFallbackRoleAndText(strat)
+    if not strat or not strat.roles then return nil, nil end
+    for _, token in ipairs(ROLE_TOKENS) do
+        local text = strat.roles[token]
+        if text and text ~= "" then
+            return token, text
+        end
     end
+    for token, text in pairs(strat.roles) do
+        if text and text ~= "" then
+            return token, text
+        end
+    end
+    return nil, nil
+end
+
+local function UpdateNotesForComp(compKey, allowFallbackRole, forcedRole)
+    ArenaSticky.currentCompKey = compKey
+    local role = forcedRole or GetMyRole()
 
     local strat = ArenaStickyDB.strategies[compKey]
     if not strat then
@@ -319,17 +574,26 @@ local function UpdateNotesForComp(compKey)
     if not strat then
         ArenaSticky.headerText:SetText("Kill: TBD  |  CC: TBD")
         ArenaSticky.bodyText:SetText("No strategy saved for: " .. compKey .. "\nUse /as edit to add one.")
-        ArenaSticky.mainFrame:Show()
         return
     end
 
     local kill = (strat.header and strat.header.kill) or "TBD"
     local cc = (strat.header and strat.header.cc) or "TBD"
-    local roleText = (strat.roles and strat.roles[role]) or "No note saved for your class in this comp."
+    local roleText = role and strat.roles and strat.roles[role]
+    if (not roleText or roleText == "") and allowFallbackRole then
+        local fallbackRole, fallbackText = GetFallbackRoleAndText(strat)
+        if fallbackText then
+            role = fallbackRole
+            roleText = ("[%s] %s"):format(fallbackRole, fallbackText)
+        end
+    end
+    if not roleText and not role then
+        roleText = "Unsupported class for role notes."
+    end
+    roleText = roleText or "No note saved for your class in this comp."
 
     ArenaSticky.headerText:SetText(("Kill: %s  |  CC: %s"):format(kill, cc))
     ArenaSticky.bodyText:SetText(roleText)
-    ArenaSticky.mainFrame:Show()
 end
 
 function ArenaSticky:BroadcastStrategies()
@@ -470,11 +734,29 @@ end
 local function PrintHelp()
     print("|cff33ff99ArenaSticky|r commands:")
     print("  /as help")
-    print("  /as test wld")
-    print("  /as edit | show | hide | sync | request")
-    print("  Works in 2v2 and 3v3 (auto-detect enemy comp size).")
-    print("  Aliases: wld hpr thug rmp")
-    print("  Or full key: /as test druid-warlock-warrior")
+    print("  /as test rmp")
+    print("  /as edit | show | hide | resetwindow | sync | request")
+end
+
+local function EnsureInitialized()
+    EnsureDB()
+    if not ArenaSticky.mainFrame then
+        CreateMainFrame()
+        ApplyWindowSettings()
+    end
+end
+
+local function ResetWindow()
+    EnsureDB()
+    ArenaStickyDB.window.x = 0
+    ArenaStickyDB.window.y = 0
+    ArenaStickyDB.window.width = 320
+    ArenaStickyDB.window.height = 200
+    ArenaStickyDB.window.scale = 1.0
+    ArenaStickyDB.window.alpha = 0.95
+    EnsureInitialized()
+    ApplyWindowSettings()
+    ArenaSticky.mainFrame:Show()
 end
 
 SLASH_ARENASTICKY1 = "/as"
@@ -493,12 +775,20 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     end
 
     if a == "hide" then
+        EnsureInitialized()
         ArenaSticky.mainFrame:Hide()
         return
     end
 
     if a == "show" then
+        EnsureInitialized()
         ArenaSticky.mainFrame:Show()
+        return
+    end
+
+    if a == "resetwindow" then
+        ResetWindow()
+        print("|cff33ff99ArenaSticky|r: Window reset to center.")
         return
     end
 
@@ -515,6 +805,7 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     end
 
     if a == "test" then
+        EnsureInitialized()
         local alias = (b or ""):gsub("^%s+", ""):gsub("%s+$", "")
         if alias == "" then
             print("|cff33ff99ArenaSticky|r: Usage: |cff00ccff/as test <alias>|r")
@@ -526,8 +817,10 @@ SlashCmdList["ARENASTICKY"] = function(msg)
             print("|cff33ff99ArenaSticky|r: Unknown alias: " .. tostring(alias))
             return
         end
-        UpdateNotesForComp(compKey)
-        print("|cff33ff99ArenaSticky|r: Showing test strat " .. compKey)
+        print("|cff33ff99ArenaSticky|r: Test resolved to " .. tostring(compKey))
+        UpdateNotesForComp(compKey, true, "DISC")
+        ArenaSticky.mainFrame:Show()
+        print("|cff33ff99ArenaSticky|r: Showing test strat " .. compKey .. " [DISC]")
         return
     end
 
@@ -543,10 +836,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local addon = ...
         if addon ~= ADDON_NAME then return end
-        EnsureDB()
-        ArenaSticky.playerRole = GetMyRole()
-        CreateMainFrame()
-        ApplyWindowSettings()
+        EnsureInitialized()
         ArenaSticky.mainFrame:Hide()
 
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
@@ -554,11 +844,9 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
-        ArenaSticky.playerRole = GetMyRole()
+        EnsureInitialized()
         if IsActiveBattlefieldArena() then
             C_Timer.After(1.0, TryDetectAndUpdate)
-        else
-            ArenaSticky.mainFrame:Hide()
         end
 
     elseif event == "ARENA_OPPONENT_UPDATE" then
@@ -570,9 +858,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "CHAT_MSG_ADDON" then
         HandleAddonMessage(...)
     elseif event == "ZONE_CHANGED_NEW_AREA" then
-        if not IsActiveBattlefieldArena() then
-            ArenaSticky.mainFrame:Hide()
-        end
+        -- Intentionally do not auto-show/hide on zone changes.
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         HandleCombatLog()
 
