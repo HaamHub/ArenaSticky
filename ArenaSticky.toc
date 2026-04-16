@@ -1,0 +1,9 @@
+## Interface: 20504
+## Title: ArenaSticky
+## Notes: Role-filtered arena sticky notes with team sync
+## Author: You
+## Version: 0.1.0
+## SavedVariables: ArenaStickyDB
+## OptionalDeps:
+ArenaSticky.lua
+ArenaSticky_Editor.lua

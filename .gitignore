@@ -1,0 +1,6 @@
+
+# Cursor/editor files
+.cursor/
+.cursor*
+*.code-workspace
+ArenaSticky_backup_prelink/
