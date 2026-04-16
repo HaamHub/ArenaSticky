@@ -2,7 +2,7 @@
 ## Title: ArenaSticky
 ## Notes: Role-filtered arena sticky notes with team sync
 ## Author: You
-## Version: 0.1.0
+## Version: 0.2.0
 ## SavedVariables: ArenaStickyDB
 ## OptionalDeps:
 ArenaSticky.lua
