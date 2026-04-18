@@ -16,6 +16,24 @@ local COMP_SLOT_OPTIONS = {
     "RESTO", "BOOMY", "FERAL",
 }
 
+local BRACKET_ICONS = {
+    ["2v2"] = "Interface\\Icons\\Ability_DualWield",
+    ["3v3"] = "Interface\\Icons\\Spell_Nature_GroundingTotem",
+}
+
+local function DropdownSpecLabel(token)
+    if not token or token == "" then
+        return ""
+    end
+    return ArenaSticky.SpecIconInline(token, 16) .. " " .. token
+end
+
+local function BracketDropdownLabel(bracket)
+    local path = BRACKET_ICONS[bracket]
+    local icon = path and ("|T" .. path .. ":16:16|t ") or ""
+    return icon .. (bracket or "")
+end
+
 local function GetPlayerDefaultNoteToken()
     local _, class = UnitClass("player")
     if class == "PRIEST" then
@@ -113,10 +131,11 @@ local function RefreshCompDropdown(f)
     UIDropDownMenu_Initialize(f.compDropdown, function(self, level)
         for _, key in ipairs(keys) do
             local info = UIDropDownMenu_CreateInfo()
-            info.text = key
+            info.text = ArenaSticky.CompKeyMenuLabel(key)
             info.arg1 = key
             info.func = function(_, selectedKey)
                 UIDropDownMenu_SetSelectedName(f.compDropdown, selectedKey)
+                UIDropDownMenu_SetText(f.compDropdown, ArenaSticky.CompKeyMenuLabel(selectedKey))
                 LoadCompIntoEditor(f, selectedKey)
             end
             UIDropDownMenu_AddButton(info, level)
@@ -198,9 +217,11 @@ local function EnsureEditor()
                 local info = UIDropDownMenu_CreateInfo()
                 info.text = classToken
                 info.arg1 = classToken
+                info.icon = ArenaSticky.SpecIconTexture(classToken)
                 info.func = function(_, selectedClass)
                     f[slotName] = selectedClass
                     UIDropDownMenu_SetSelectedName(dropdown, selectedClass)
+                    UIDropDownMenu_SetText(dropdown, DropdownSpecLabel(selectedClass))
                     UpdateCompFromSlots()
                 end
                 UIDropDownMenu_AddButton(info, level)
@@ -219,6 +240,9 @@ local function EnsureEditor()
         UIDropDownMenu_SetSelectedName(self.compSlot1, self.compSlot1Value)
         UIDropDownMenu_SetSelectedName(self.compSlot2, self.compSlot2Value)
         UIDropDownMenu_SetSelectedName(self.compSlot3, self.compSlot3Value)
+        UIDropDownMenu_SetText(self.compSlot1, DropdownSpecLabel(self.compSlot1Value))
+        UIDropDownMenu_SetText(self.compSlot2, DropdownSpecLabel(self.compSlot2Value))
+        UIDropDownMenu_SetText(self.compSlot3, DropdownSpecLabel(self.compSlot3Value))
     end
 
     f.UpdateVisibleNoteRows = function(self)
@@ -251,6 +275,7 @@ local function EnsureEditor()
         local bracket = (size >= 3) and "3v3" or "2v2"
         self.selectedBracket = bracket
         UIDropDownMenu_SetSelectedName(self.bracketDropdown, bracket)
+        UIDropDownMenu_SetText(self.bracketDropdown, BracketDropdownLabel(bracket))
         if bracket == "2v2" then
             self.compSlot3:Hide()
         else
@@ -278,9 +303,11 @@ local function EnsureEditor()
             local info = UIDropDownMenu_CreateInfo()
             info.text = bracket
             info.arg1 = bracket
+            info.icon = BRACKET_ICONS[bracket]
             info.func = function(_, selectedBracket)
                 f.selectedBracket = selectedBracket
                 UIDropDownMenu_SetSelectedName(f.bracketDropdown, selectedBracket)
+                UIDropDownMenu_SetText(f.bracketDropdown, BracketDropdownLabel(selectedBracket))
                 if selectedBracket == "2v2" then
                     f.compSlot3:Hide()
                 else
@@ -297,6 +324,7 @@ local function EnsureEditor()
     end)
     f.selectedBracket = "3v3"
     UIDropDownMenu_SetSelectedName(f.bracketDropdown, f.selectedBracket)
+    UIDropDownMenu_SetText(f.bracketDropdown, BracketDropdownLabel(f.selectedBracket))
 
     MakeLabel("Build Comp from Class Dropdowns", 185, -90)
     f.compSlot1 = CreateFrame("Frame", "ArenaStickyCompSlot1Dropdown", f, "UIDropDownMenuTemplate")
@@ -318,6 +346,9 @@ local function EnsureEditor()
     UIDropDownMenu_SetSelectedName(f.compSlot1, f.compSlot1Value)
     UIDropDownMenu_SetSelectedName(f.compSlot2, f.compSlot2Value)
     UIDropDownMenu_SetSelectedName(f.compSlot3, f.compSlot3Value)
+    UIDropDownMenu_SetText(f.compSlot1, DropdownSpecLabel(f.compSlot1Value))
+    UIDropDownMenu_SetText(f.compSlot2, DropdownSpecLabel(f.compSlot2Value))
+    UIDropDownMenu_SetText(f.compSlot3, DropdownSpecLabel(f.compSlot3Value))
 
     MakeLabel("Kill Target", 12, -146)
     f.killInput = MakeInput(170, 24, 12, -164, false)
@@ -345,10 +376,11 @@ local function EnsureEditor()
                 local info = UIDropDownMenu_CreateInfo()
                 info.text = classToken
                 info.arg1 = classToken
+                info.icon = ArenaSticky.SpecIconTexture(classToken)
                 info.func = function(_, selectedClass)
                     row.classValue = selectedClass
                     UIDropDownMenu_SetSelectedName(row.dropdown, selectedClass)
-                    UIDropDownMenu_SetText(row.dropdown, selectedClass)
+                    UIDropDownMenu_SetText(row.dropdown, DropdownSpecLabel(selectedClass))
                     local key = (f.compInput:GetText() or ""):upper()
                     local data = ArenaStickyDB.strategies[key]
                     row.input:SetText((data and data.roles and data.roles[selectedClass]) or "")
@@ -357,7 +389,7 @@ local function EnsureEditor()
             end
         end)
         UIDropDownMenu_SetSelectedName(row.dropdown, row.classValue)
-        UIDropDownMenu_SetText(row.dropdown, row.classValue)
+        UIDropDownMenu_SetText(row.dropdown, DropdownSpecLabel(row.classValue))
         f.noteRows[i] = row
     end
     f:UpdateVisibleNoteRows()
@@ -416,13 +448,14 @@ local function EnsureEditor()
         ArenaStickyDB.lastUpdated = time()
         RefreshCompDropdown(f)
         UIDropDownMenu_SetSelectedName(f.compDropdown, key)
+        UIDropDownMenu_SetText(f.compDropdown, ArenaSticky.CompKeyMenuLabel(key))
 
         f.status:SetText("Saved " .. key .. " (v" .. ArenaStickyDB.version .. ")")
 
         if ArenaSticky.currentCompKey == key and ArenaSticky.mainFrame and ArenaSticky.mainFrame:IsShown() then
             local role = ArenaSticky.playerRole
             local strat = ArenaStickyDB.strategies[key]
-            ArenaSticky.headerText:SetText(("Kill: %s  |  CC: %s"):format(strat.header.kill or "TBD", strat.header.cc or "TBD"))
+            ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(strat.header.kill or "TBD", strat.header.cc or "TBD"))
             ArenaSticky.bodyText:SetText((strat.roles and strat.roles[role]) or "No note for your class.")
         end
     end)
@@ -450,18 +483,18 @@ function ArenaSticky.OpenEditor()
         local playerToken = GetPlayerDefaultNoteToken() or "DISC"
         f.noteRows[1].classValue = playerToken
         UIDropDownMenu_SetSelectedName(f.noteRows[1].dropdown, playerToken)
-        UIDropDownMenu_SetText(f.noteRows[1].dropdown, playerToken)
+        UIDropDownMenu_SetText(f.noteRows[1].dropdown, DropdownSpecLabel(playerToken))
         if f.noteRows[2] then
             local party1Token = GetPartyDefaultNoteToken("party1") or f.compSlot2Value
             f.noteRows[2].classValue = party1Token
             UIDropDownMenu_SetSelectedName(f.noteRows[2].dropdown, party1Token)
-            UIDropDownMenu_SetText(f.noteRows[2].dropdown, party1Token)
+            UIDropDownMenu_SetText(f.noteRows[2].dropdown, DropdownSpecLabel(party1Token))
         end
         if f.noteRows[3] then
             local party2Token = GetPartyDefaultNoteToken("party2") or f.compSlot3Value
             f.noteRows[3].classValue = party2Token
             UIDropDownMenu_SetSelectedName(f.noteRows[3].dropdown, party2Token)
-            UIDropDownMenu_SetText(f.noteRows[3].dropdown, party2Token)
+            UIDropDownMenu_SetText(f.noteRows[3].dropdown, DropdownSpecLabel(party2Token))
         end
         if f.UpdateNoteRowsFromComp then
             f:UpdateNoteRowsFromComp()
