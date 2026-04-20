@@ -7,3 +7,7 @@ ArenaSticky_backup_prelink/
 
 # Local Python / helper scripts (paths, WTF patching); not shipped with the addon
 tools/
+
+# Icons: keep only the in-game AddOns list icon
+icons/*
+!icons/as_icon-256.tga

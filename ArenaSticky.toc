@@ -1,6 +1,7 @@
 ## Interface: 20504
 ## Title: ArenaSticky
 ## Notes: Arena sticky notes, teammate sync, named profiles, import/export
+## IconTexture: Interface\AddOns\ArenaSticky\icons\as_icon-256
 ## Author: You
 ## Version: 0.3.0
 ## SavedVariables: ArenaStickyDB

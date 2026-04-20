@@ -188,6 +188,25 @@ local function MergeMissingStrategies(dest, src)
     for key, strat in pairs(src) do
         if dest[key] == nil then
             dest[key] = DeepCopy(strat)
+        elseif type(dest[key]) == "table" and type(strat) == "table" then
+            -- Preserve user edits while backfilling newly added default fields/roles.
+            dest[key].header = dest[key].header or {}
+            if type(strat.header) == "table" then
+                if dest[key].header.kill == nil then
+                    dest[key].header.kill = strat.header.kill
+                end
+                if dest[key].header.cc == nil then
+                    dest[key].header.cc = strat.header.cc
+                end
+            end
+            dest[key].roles = dest[key].roles or {}
+            if type(strat.roles) == "table" then
+                for roleToken, roleText in pairs(strat.roles) do
+                    if dest[key].roles[roleToken] == nil then
+                        dest[key].roles[roleToken] = roleText
+                    end
+                end
+            end
         end
     end
     return dest
@@ -291,59 +310,76 @@ end
 
 local DEFAULT_STRATEGIES = {
     -- Role lines: aim ~5–12 words each (sticky / glance).
+    -- TBC Anniversary: common ladder openers and target priorities.
+    -- These are starter notes (high-level) and should be customized per team comp/map.
     ["RESTO-WARLOCK-WARRIOR"] = {
         header = { kill = "Warlock", cc = "Resto Druid" },
         roles = {
-            DISC = "Pillar. Dispel fear. Trinket cross; reset.",
-            ROGUE = "Open lock. Kidney druid CC. Bad go reset.",
-            MAGE = "Sheep druid go. Peel war. CS fear.",
+            DISC = "Pillar lock damage. Fear druid on kidneys. Dispel fear quickly.",
+            ROGUE = "Open lock safe. Kidney druid on go. Reset if war has uptime.",
+            MAGE = "Sheep druid on goes. Peel warrior hard. CS lock fears.",
+            RESTO = "Pre-hot team, pillar lock pressure, cyclone druid on your goes.",
+            WARRIOR = "Harass lock uptime, intervene peels, swap druid on call.",
         },
     },
     ["DISC-MAGE-ROGUE"] = {
         header = { kill = "Mage", cc = "Disc" },
         roles = {
-            DISC = "No trinket stack. Fear sheep. PI real goes.",
-            ROGUE = "Sap disc. Stop open. Vanish re-go.",
-            MAGE = "Poly race. Counter if enemy disc locked.",
+            DISC = "Avoid trinket overlap. Fear off DR. PI on clean setups.",
+            ROGUE = "Sap priest opener. Force trinkets, vanish, re-go with kidney.",
+            MAGE = "Win poly race early. CS priest or mage to secure kill.",
+            RESTO = "Pre-hot opener, cyclone priest on kidneys, avoid cheap-shot overlap.",
+            WARRIOR = "Stay on mage, reflect polys, swap priest during stun chains.",
         },
     },
+    -- TBC Anniversary 2v2 starter set (top/popular ladder archetypes).
     ["DISC-MAGE"] = {
         header = { kill = "Mage", cc = "Disc" },
         roles = {
-            DISC = "PI goes. Fear/sheep. MD their go.",
-            MAGE = "Race poly. CS if disc locked.",
+            DISC = "PI on clean poly setup. Fear priest after CS windows.",
+            MAGE = "Win poly race, pressure mage, and CS priest on goes.",
+            RESTO = "Pre-hot opener, clone priest on setup, line mage burst windows.",
+            WARRIOR = "Pressure mage, reflect polys, and swap priest after trinket.",
         },
     },
     ["DISC-HUNTER-ROGUE"] = {
         header = { kill = "Hunter", cc = "Disc" },
         roles = {
-            DISC = "No sap-trap. Trinket chains. Dispel trap.",
-            ROGUE = "Rogue first, then hunter.",
-            MAGE = "Peel. Poly disc go.",
+            DISC = "Respect sap-trap chain. Dispel traps fast. Fear priest on go.",
+            ROGUE = "Deny enemy rogue opener. Swap hunter in stuns with priest CC.",
+            MAGE = "Root/peel rogue. Poly priest on kidneys. Stop hunter burst windows.",
+            RESTO = "Pre-hot traps, clone priest on stuns, bear and line hunter burst.",
+            WARRIOR = "Harass hunter, disarm rogue goes, swap priest with team CC.",
         },
     },
     ["RESTO-ROGUE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Resto Druid" },
         roles = {
-            DISC = "Dispel coil/fear. Drink if rogue resets you.",
-            ROGUE = "Open lock. Kidney druid. Blind trinket.",
-            MAGE = "Sheep druid. Peel rogue. CS lock.",
+            DISC = "Dispel coil/fear quickly. Fear druid during lock pressure.",
+            ROGUE = "Open lock when safe. Kidney druid for CC chains. Reset clean.",
+            MAGE = "Sheep druid on goes. Peel rogue between setups. CS lock fear.",
+            RESTO = "Track rogue re-openers, clone druid on kidneys, line lock damage.",
+            WARRIOR = "Sit lock when safe, peel rogue swaps, help CC druid windows.",
         },
     },
     ["RSHAM-ROGUE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "RSham" },
         roles = {
-            DISC = "Shield purge. Fear sham go. Save mana.",
-            ROGUE = "Open lock. Kick fear. Blind sham.",
-            MAGE = "Sheep sham. Peel rogue. CS lock.",
+            DISC = "Pre-shield pressure. Fear sham on stuns. Keep dispels efficient.",
+            ROGUE = "Open lock, kick fears, and blind sham on trinket.",
+            MAGE = "Sheep sham on every go. Peel rogue downtime. CS lock fear.",
+            RESTO = "Pre-hot purge windows, clone sham on stuns, avoid rogue cross-CC.",
+            WARRIOR = "Pressure lock, interrupt sham healing, peel rogue reconnects.",
         },
     },
     ["RSHAM-SHADOW-WARLOCK"] = {
         header = { kill = "Warlock", cc = "RSham" },
         roles = {
-            DISC = "Drink. Dispel VT/fear smart.",
-            ROGUE = "Lock. Kick fear. Kidney sham. Reset.",
-            MAGE = "Sheep sham. CS lock. Peel shadow.",
+            DISC = "Pillar and drink when safe. Dispel VT/fears selectively.",
+            ROGUE = "Train lock in short goes. Kidney sham. Reset between silences.",
+            MAGE = "Sheep sham every setup. CS lock fears. Peel shadow pressure.",
+            RESTO = "Pre-hot spread rot, clone sham on goes, deny silence chains.",
+            WARRIOR = "Tunnel lock, reflect fears when possible, peel shadow burst.",
         },
     },
     ["RSHAM-WARLOCK-WARRIOR"] = {
@@ -352,6 +388,8 @@ local DEFAULT_STRATEGIES = {
             DISC = "Bridge. Trinket stacks. Fear sham go.",
             ROGUE = "Open lock. Force CDs. Reset if war free.",
             MAGE = "Sheep sham. Peel war. CS fear.",
+            RESTO = "Pre-hot lock pressure, clone sham on goes, line warrior uptime.",
+            WARRIOR = "Pressure lock, disarm warrior burst, swap sham in stun windows.",
         },
     },
     ["ELE-RESTO-WARLOCK"] = {
@@ -397,17 +435,21 @@ local DEFAULT_STRATEGIES = {
     ["RET-RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Fear sham go. Trinket overlap.",
-            ROGUE = "War. Kidney sham. Reset.",
-            MAGE = "Peel war/ret. Sheep sham. Slow war.",
+            DISC = "Trade early for warrior/ret burst. Fear sham on setups.",
+            ROGUE = "Pressure warrior in stuns. Kidney sham for every real go.",
+            MAGE = "Peel melee uptime. Sheep sham on DR cycles. Keep warrior slowed.",
+            RESTO = "Pre-hot wings go, clone sham for kills, kite warrior uptime.",
+            WARRIOR = "Train enemy warrior, disarm wings bursts, swap sham on stuns.",
         },
     },
     ["MAGE-RESTO-WARRIOR"] = {
         header = { kill = "Mage", cc = "Resto Druid" },
         roles = {
-            DISC = "Don't overtrade. Fear druid setup.",
-            ROGUE = "Open mage. Kidney druid. Peel war.",
-            MAGE = "Poly race. Sheep druid. Slow war.",
+            DISC = "Do not overtrade into warrior pressure. Fear druid for goes.",
+            ROGUE = "Open mage aggressively. Kidney druid during swaps. Peel warrior.",
+            MAGE = "Win poly race. Sheep druid on goes. Control warrior uptime.",
+            RESTO = "Keep hots through swaps, clone druid on goes, line mage burst.",
+            WARRIOR = "Pressure mage, reflect polys, swap druid during stun windows.",
         },
     },
     ["ENH-HPAL-WARRIOR"] = {
@@ -429,9 +471,11 @@ local DEFAULT_STRATEGIES = {
     ["ENH-RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Fear sham go. Trinket kill.",
-            ROGUE = "War. Kidney sham. Reset.",
-            MAGE = "Peel melee. Sheep sham. Slow war.",
+            DISC = "Respect opener burst. Fear sham during stuns. Keep team stable.",
+            ROGUE = "Train warrior, kidney sham, reset if enh has wolves/free uptime.",
+            MAGE = "Peel double melee. Sheep sham on go. Keep warrior rooted/slowed.",
+            RESTO = "Pre-hot wolves go, clone sham on setups, kite melee with roots.",
+            WARRIOR = "Train warrior target calls, disarm enh burst, swap sham on stuns.",
         },
     },
     ["RESTO-RSHAM-WARRIOR"] = {
@@ -446,9 +490,11 @@ local DEFAULT_STRATEGIES = {
     ["DISC-ROGUE"] = {
         header = { kill = "Rogue", cc = "Disc" },
         roles = {
-            DISC = "Fear disc goes. No CC overlap. Trinket chains.",
-            ROGUE = "Stick rogue. Kick/blind disc trinket.",
-            MAGE = "Poly disc. Slow rogue. CS fear.",
+            DISC = "Survive opener, avoid overlap, and fear priest on your goes.",
+            ROGUE = "Stick enemy rogue, kick priest heals, blind after trinket.",
+            MAGE = "Peel rogue uptime, poly priest on stuns, CS key casts.",
+            RESTO = "Pre-hot opener, clone priest on stuns, deny rogue resets.",
+            WARRIOR = "Sit rogue, peel swaps with disarm, swap priest with team CC.",
         },
     },
     ["ROGUE-SHADOW"] = {
@@ -463,57 +509,71 @@ local DEFAULT_STRATEGIES = {
     ["DISC-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Disc" },
         roles = {
-            DISC = "Dispel key dots/fear. Stay up.",
-            ROGUE = "Lock. Kick fear. Blind disc.",
-            MAGE = "Sheep disc go. Line. CS lock.",
+            DISC = "Line heavy dots, dispel key fears, fear priest on setup.",
+            ROGUE = "Train lock, kick fear, and blind priest after trinket.",
+            MAGE = "Sheep priest on goes, CS fear casts, and line lock damage.",
+            RESTO = "Pre-hot dot pressure, clone priest on goes, pillar lock damage.",
+            WARRIOR = "Pressure lock uptime, kick fears, swap priest on stun windows.",
         },
     },
     ["HPAL-WARRIOR"] = {
         header = { kill = "Warrior", cc = "HPal" },
         roles = {
-            DISC = "Fear pal go. Bait war.",
-            ROGUE = "War first. Kidney pal. Reset.",
-            MAGE = "Slow war. Poly pal. Drink.",
+            DISC = "Trade for warrior uptime, fear paladin on stuns, avoid overlap.",
+            ROGUE = "Train warrior, kidney paladin for every setup, reset clean.",
+            MAGE = "Slow warrior permanently, poly paladin on goes, drink on peel.",
+            RESTO = "Pre-hot warrior pressure, clone paladin on stuns, avoid overtrading.",
+            WARRIOR = "Train warrior mirror, disarm key burst, swap paladin on call.",
         },
     },
     ["RESTO-WARRIOR"] = {
         header = { kill = "Warrior", cc = "Resto Druid" },
         roles = {
-            DISC = "Don't get pulled. Fear druid go. Trinket bash.",
-            ROGUE = "Kidney war druid CC. Reset.",
-            MAGE = "Slow war. Sheep druid go.",
+            DISC = "Pillar warrior, fear druid on setups, trinket key bash chains.",
+            ROGUE = "Train warrior, kidney druid for kill windows, reset between.",
+            MAGE = "Control warrior uptime, sheep druid on goes, kite aggressively.",
+            RESTO = "Mirror hots, clone druid on stuns, survive warrior reconnects.",
+            WARRIOR = "Train warrior, maintain hamstring, swap druid during cyclone DR.",
         },
     },
     ["RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Fear sham go. Mana game.",
-            ROGUE = "War. Kidney sham. Reset.",
-            MAGE = "Peel war. Sheep sham. CS.",
+            DISC = "Play mana-efficient, fear shaman on goes, stabilize burst windows.",
+            ROGUE = "Pressure warrior, kidney sham for setups, reset after cooldowns.",
+            MAGE = "Peel warrior and sheep shaman during stuns, CS key heals.",
+            RESTO = "Pre-hot purge windows, clone sham on stuns, kite warrior uptime.",
+            WARRIOR = "Train warrior, disarm offensive bursts, swap shaman on crowd control.",
         },
     },
     ["DISC-HUNTER"] = {
         header = { kill = "Hunter", cc = "Disc" },
         roles = {
-            DISC = "Trap respect. Trinket chains. Fear disc.",
-            ROGUE = "Stick hunter. Kick/blind disc.",
-            MAGE = "Pin hunter. Poly disc. Nova.",
+            DISC = "Respect trap chains, dispel quickly, and fear priest on setups.",
+            ROGUE = "Stick hunter, deny traps with pressure, blind priest after trinket.",
+            MAGE = "Pin hunter with roots/novas, poly priest, and stop burst windows.",
+            RESTO = "Pre-hot traps, clone priest on setup, line hunter burst.",
+            WARRIOR = "Train hunter, intervene trap attempts, swap priest on stuns.",
         },
     },
     ["MAGE-ROGUE"] = {
         header = { kill = "Mage", cc = "Rogue" },
         roles = {
-            DISC = "Fear rogue goes. MD CC. Trinket kills.",
-            ROGUE = "Mage goes. Kick poly. Vanish re-go.",
-            MAGE = "Sheep rogue DR. Nova. CS.",
+            DISC = "Survive opener, MD key CC, and fear rogue on your setups.",
+            ROGUE = "Pressure mage, kick polys, and vanish to create re-openers.",
+            MAGE = "Control rogue DR carefully, sheep on setup, CS defensive casts.",
+            RESTO = "Pre-hot opener, bear rogue stuns, cyclone rogue during mage pressure.",
+            WARRIOR = "Train mage hard, disarm rogue goes, intervene peels on stuns.",
         },
     },
     ["RESTO-ROGUE"] = {
         header = { kill = "Rogue", cc = "Resto Druid" },
         roles = {
-            DISC = "Fear druid after open. Save CDs.",
-            ROGUE = "Their rogue. CC druid trinket.",
-            MAGE = "Peel rogue. Druid on goes only.",
+            DISC = "Stabilize opener, fear druid after rogue commits, hold key CDs.",
+            ROGUE = "Match enemy rogue pressure and CC druid after trinket.",
+            MAGE = "Peel rogue uptime, then commit CC on druid for goes.",
+            RESTO = "Track opener, clone druid on stuns, deny rogue reset windows.",
+            WARRIOR = "Stick rogue, disarm bursts, swap druid during team CC.",
         },
     },
     -- From SavedVariables / ArenaReplay comps not covered above (same short-line style).
@@ -544,9 +604,21 @@ local DEFAULT_STRATEGIES = {
     ["MAGE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Mage" },
         roles = {
-            DISC = "Fear lock goes. Dispel dots. Trinket coil.",
-            ROGUE = "Lock first. Kick fear. Kidney swap.",
-            MAGE = "Sheep mage peel. CS fear. Line lock.",
+            DISC = "Dispel key dots, fear lock on setups, trinket major coil chains.",
+            ROGUE = "Train lock, kick fear casts, and kidney swap windows.",
+            MAGE = "Sheep enemy mage to peel, CS fear casts, line lock damage.",
+            RESTO = "Pre-hot spread pressure, clone mage on setups, line lock bursts.",
+            WARRIOR = "Train lock, reflect mage CC, swap mage when lock is safe.",
+        },
+    },
+    ["RESTO-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Resto Druid" },
+        roles = {
+            DISC = "Pillar lock pressure, dispel fears, and fear druid on setups.",
+            ROGUE = "Open lock safely, kidney druid for kill windows, reset clean.",
+            MAGE = "Sheep druid on goes, CS fear, and line lock damage between.",
+            RESTO = "Mirror hots, clone druid on setups, line lock pressure safely.",
+            WARRIOR = "Train lock, swap druid on stuns, avoid overextending in roots.",
         },
     },
     ["ROGUE-MAGE"] = {
