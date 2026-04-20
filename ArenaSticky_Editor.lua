@@ -152,7 +152,7 @@ local function EnsureEditor()
     if ArenaSticky.editor then return ArenaSticky.editor end
 
     local f = CreateFrame("Frame", "ArenaStickyEditorFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate")
-    f:SetSize(700, 480)
+    f:SetSize(700, 530)
     f:SetPoint("CENTER", 120, 0)
     f:SetClampedToScreen(true)
     f:SetMovable(true)
@@ -171,6 +171,15 @@ local function EnsureEditor()
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 12, -10)
     title:SetText("ArenaSticky Strategy Editor")
+
+    -- Profile under the title on the LEFT (avoids covering "Or select saved comp" on the right).
+    local profileLbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    profileLbl:SetPoint("TOPLEFT", 12, -32)
+    profileLbl:SetText("Profile")
+
+    f.profileDropdown = CreateFrame("Frame", "ArenaStickyProfileDropdown", f, "UIDropDownMenuTemplate")
+    f.profileDropdown:SetPoint("TOPLEFT", 12, -50)
+    UIDropDownMenu_SetWidth(f.profileDropdown, 200)
 
     local function MakeLabel(text, x, y)
         local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -286,17 +295,17 @@ local function EnsureEditor()
         end
     end
 
-    MakeLabel("Comp Key (e.g. RESTO-WARLOCK-WARRIOR)", 12, -40)
-    f.compInput = MakeInput(340, 24, 12, -58, false)
-    MakeLabel("Or select saved comp", 370, -40)
+    MakeLabel("Comp Key (e.g. RESTO-WARLOCK-WARRIOR)", 12, -82)
+    f.compInput = MakeInput(340, 24, 12, -100, false)
+    MakeLabel("Or select saved comp", 370, -82)
     f.compDropdown = CreateFrame("Frame", "ArenaStickyCompDropdown", f, "UIDropDownMenuTemplate")
-    f.compDropdown:SetPoint("TOPLEFT", 350, -54)
+    f.compDropdown:SetPoint("TOPLEFT", 350, -96)
     UIDropDownMenu_SetWidth(f.compDropdown, 220)
     UIDropDownMenu_SetText(f.compDropdown, "Select existing comp...")
 
-    MakeLabel("Bracket", 12, -90)
+    MakeLabel("Bracket", 12, -132)
     f.bracketDropdown = CreateFrame("Frame", "ArenaStickyBracketDropdown", f, "UIDropDownMenuTemplate")
-    f.bracketDropdown:SetPoint("TOPLEFT", 0, -102)
+    f.bracketDropdown:SetPoint("TOPLEFT", 0, -144)
     UIDropDownMenu_SetWidth(f.bracketDropdown, 90)
     UIDropDownMenu_Initialize(f.bracketDropdown, function(self, level)
         for _, bracket in ipairs({ "2v2", "3v3" }) do
@@ -326,15 +335,15 @@ local function EnsureEditor()
     UIDropDownMenu_SetSelectedName(f.bracketDropdown, f.selectedBracket)
     UIDropDownMenu_SetText(f.bracketDropdown, BracketDropdownLabel(f.selectedBracket))
 
-    MakeLabel("Build Comp from Class Dropdowns", 185, -90)
+    MakeLabel("Build Comp from Class Dropdowns", 185, -132)
     f.compSlot1 = CreateFrame("Frame", "ArenaStickyCompSlot1Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot1:SetPoint("TOPLEFT", 175, -102)
+    f.compSlot1:SetPoint("TOPLEFT", 175, -144)
     UIDropDownMenu_SetWidth(f.compSlot1, 130)
     f.compSlot2 = CreateFrame("Frame", "ArenaStickyCompSlot2Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot2:SetPoint("TOPLEFT", 335, -102)
+    f.compSlot2:SetPoint("TOPLEFT", 335, -144)
     UIDropDownMenu_SetWidth(f.compSlot2, 130)
     f.compSlot3 = CreateFrame("Frame", "ArenaStickyCompSlot3Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot3:SetPoint("TOPLEFT", 495, -102)
+    f.compSlot3:SetPoint("TOPLEFT", 495, -144)
     UIDropDownMenu_SetWidth(f.compSlot3, 130)
 
     BuildCompSlotDropdown(f.compSlot1, "compSlot1Value")
@@ -350,15 +359,15 @@ local function EnsureEditor()
     UIDropDownMenu_SetText(f.compSlot2, DropdownSpecLabel(f.compSlot2Value))
     UIDropDownMenu_SetText(f.compSlot3, DropdownSpecLabel(f.compSlot3Value))
 
-    MakeLabel("Kill Target", 12, -146)
-    f.killInput = MakeInput(170, 24, 12, -164, false)
+    MakeLabel("Kill Target", 12, -188)
+    f.killInput = MakeInput(170, 24, 12, -206, false)
 
-    MakeLabel("CC Target", 200, -146)
-    f.ccInput = MakeInput(170, 24, 200, -164, false)
+    MakeLabel("CC Target", 200, -188)
+    f.ccInput = MakeInput(170, 24, 200, -206, false)
 
-    MakeLabel("Class Notes (per class in this comp)", 12, -196)
+    MakeLabel("Class Notes (per class in this comp)", 12, -238)
     f.noteRows = {}
-    local rowY = { -216, -292, -368 }
+    local rowY = { -258, -334, -410 }
     for i = 1, 3 do
         local row = {}
         row.label = MakeLabel(("Class %d"):format(i), 12, rowY[i])
@@ -409,6 +418,16 @@ local function EnsureEditor()
     pushBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
     pushBtn:SetText("Push to Team")
 
+    local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    exportBtn:SetSize(88, 22)
+    exportBtn:SetPoint("BOTTOMLEFT", 12, 36)
+    exportBtn:SetText("Export…")
+
+    local importBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    importBtn:SetSize(88, 22)
+    importBtn:SetPoint("LEFT", exportBtn, "RIGHT", 8, 0)
+    importBtn:SetText("Import…")
+
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     closeBtn:SetSize(80, 24)
     closeBtn:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -446,6 +465,9 @@ local function EnsureEditor()
         end
         ArenaStickyDB.version = (ArenaStickyDB.version or 1) + 1
         ArenaStickyDB.lastUpdated = time()
+        if ArenaSticky.SyncActiveProfileMeta then
+            ArenaSticky.SyncActiveProfileMeta()
+        end
         RefreshCompDropdown(f)
         UIDropDownMenu_SetSelectedName(f.compDropdown, key)
         UIDropDownMenu_SetText(f.compDropdown, ArenaSticky.CompKeyMenuLabel(key))
@@ -453,7 +475,7 @@ local function EnsureEditor()
         f.status:SetText("Saved " .. key .. " (v" .. ArenaStickyDB.version .. ")")
 
         if ArenaSticky.currentCompKey == key and ArenaSticky.mainFrame and ArenaSticky.mainFrame:IsShown() then
-            local role = ArenaSticky.playerRole
+            local role = ArenaSticky.GetPlayerRoleToken and ArenaSticky.GetPlayerRoleToken() or nil
             local strat = ArenaStickyDB.strategies[key]
             ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(strat.header.kill or "TBD", strat.header.cc or "TBD"))
             ArenaSticky.bodyText:SetText((strat.roles and strat.roles[role]) or "No note for your class.")
@@ -463,22 +485,104 @@ local function EnsureEditor()
     pushBtn:SetScript("OnClick", function()
         if ArenaSticky.PushFullSync then
             ArenaSticky:PushFullSync()
-            f.status:SetText("Pushed strategy pack to team.")
+            f.status:SetText("Pushed strategy pack to team (active profile).")
         end
+    end)
+
+    exportBtn:SetScript("OnClick", function()
+        if ArenaSticky.BuildExportStringActiveProfile then
+            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringActiveProfile()
+            if StaticPopup_Show then
+                StaticPopup_Show("ARENASTICKY_EXPORT_TEXT")
+            end
+            f.status:SetText("Export: copy the string from the popup (share online or backup).")
+        end
+    end)
+
+    importBtn:SetScript("OnClick", function()
+        if StaticPopup_Show then
+            StaticPopup_Show("ARENASTICKY_IMPORT_TEXT")
+        end
+        f.status:SetText("Import: paste AS1 or ASPACK1 string, then confirm.")
     end)
 
     closeBtn:SetScript("OnClick", function()
         f:Hide()
     end)
 
+    local function RefreshProfileDropdown()
+        if not f.profileDropdown or not ArenaSticky.GetSortedProfileNames then
+            return
+        end
+        local names = ArenaSticky.GetSortedProfileNames()
+        UIDropDownMenu_Initialize(f.profileDropdown, function(_, level)
+            for _, pname in ipairs(names) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = pname
+                info.func = function()
+                    ArenaSticky.SwitchProfile(pname)
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        local cur = (ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default"
+        UIDropDownMenu_SetText(f.profileDropdown, cur)
+    end
+    f.RefreshProfileDropdown = RefreshProfileDropdown
+
+    f.RunRefreshFromProfileChange = function()
+        RefreshCompDropdown(f)
+        local k = (f.compInput:GetText() or ""):upper()
+        if k ~= "" then
+            LoadCompIntoEditor(f, k)
+        end
+    end
+
     ArenaSticky.editor = f
     RefreshCompDropdown(f)
+    RefreshProfileDropdown()
     return f
+end
+
+function ArenaSticky.EditorRefreshFromProfile()
+    local fr = ArenaSticky.editor
+    if not fr then
+        return
+    end
+    if fr.RunRefreshFromProfileChange then
+        fr:RunRefreshFromProfileChange()
+    end
+    if fr.RefreshProfileDropdown then
+        fr:RefreshProfileDropdown()
+    end
 end
 
 function ArenaSticky.OpenEditor()
     local f = EnsureEditor()
+
+    local lastKey = ArenaSticky.currentCompKey
+    if (not lastKey or lastKey == "") and ArenaStickyDB and ArenaStickyDB.lastPlayedCompKey then
+        lastKey = ArenaStickyDB.lastPlayedCompKey
+    end
+    if type(lastKey) == "string" then
+        lastKey = lastKey:upper():match("^%s*(.-)%s*$")
+    end
+    if lastKey == "" then
+        lastKey = nil
+    end
+
+    if lastKey then
+        LoadCompIntoEditor(f, lastKey)
+    end
+
     RefreshCompDropdown(f)
+
+    if lastKey and f.compDropdown then
+        UIDropDownMenu_SetSelectedName(f.compDropdown, lastKey)
+        UIDropDownMenu_SetText(f.compDropdown, ArenaSticky.CompKeyMenuLabel(lastKey))
+    end
+
+    -- Class note rows = your team (player + party), not enemy comp tokens from the key above.
     if f.noteRows and f.noteRows[1] then
         local playerToken = GetPlayerDefaultNoteToken() or "DISC"
         f.noteRows[1].classValue = playerToken

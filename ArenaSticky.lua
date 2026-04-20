@@ -15,6 +15,9 @@ ArenaSticky.suppressAutoShow = false
 local UpdateNotesForComp
 local ApplyStickyMinimizedLayout
 
+-- STRATSYNC reassembly (multi-part; addon messages are capped at 255 bytes)
+local stratSyncBuffers = {}
+
 local ROLE_TOKENS = {
     "WARRIOR", "HUNTER", "ROGUE", "MAGE", "WARLOCK",
     "RET", "HPAL",
@@ -69,15 +72,15 @@ ArenaSticky.SPEC_ICONS = {
     RET = "Interface\\Icons\\Spell_Holy_CrusaderStrike",
     HPAL = "Interface\\Icons\\Spell_Holy_HolyBolt",
     RSHAM = "Interface\\Icons\\Spell_Nature_HealingWaveLesser",
-    ELE = "Interface\\Icons\\Spell_Nature_Lightning",
-    ENH = "Interface\\Icons\\Spell_Shaman_Stormstrike",
+    ELE = "Interface\\Icons\\Spell_Nature_LightningBolt",
+    ENH = "Interface\\Icons\\Ability_Shaman_Stormstrike",
     DISC = "Interface\\Icons\\Spell_Holy_PowerWordShield",
     SHADOW = "Interface\\Icons\\Spell_Shadow_ShadowWordPain",
     RESTO = "Interface\\Icons\\Spell_Nature_HealingTouch",
     BOOMY = "Interface\\Icons\\Spell_Nature_StarFall",
     FERAL = "Interface\\Icons\\Ability_Druid_CatForm",
     PALADIN = "Interface\\Icons\\Spell_Holy_SealOfMight",
-    SHAMAN = "Interface\\Icons\\Spell_Nature_BloodLust",
+    SHAMAN = "Interface\\Icons\\Spell_Nature_LightningShield",
     PRIEST = "Interface\\Icons\\INV_Staff_32",
     DRUID = "Interface\\Icons\\Ability_Druid_Maul",
 }
@@ -186,6 +189,40 @@ local function MergeMissingStrategies(dest, src)
         end
     end
     return dest
+end
+
+--- Profile names: letters, numbers, spaces, hyphen, underscore (safe for export lines).
+local function ValidateProfileName(raw)
+    local name = (raw or ""):match("^%s*(.-)%s*$") or ""
+    if name == "" then
+        return nil, "Profile name is required."
+    end
+    if #name > 40 then
+        return nil, "Profile name is too long (40 characters max)."
+    end
+    if not name:match("^[%w%s%-_]+$") then
+        return nil, "Use only letters, numbers, spaces, hyphen, and underscore."
+    end
+    return name
+end
+
+local function SyncActiveProfilePointers()
+    if not ArenaStickyDB or type(ArenaStickyDB.profiles) ~= "table" then
+        return
+    end
+    local n = ArenaStickyDB.activeProfile or "Default"
+    if not ArenaStickyDB.profiles[n] then
+        ArenaStickyDB.profiles[n] = { version = 1, lastUpdated = time(), strategies = {} }
+    end
+    local p = ArenaStickyDB.profiles[n]
+    if type(p.strategies) ~= "table" then
+        p.strategies = {}
+    end
+    p.version = tonumber(p.version) or 1
+    p.lastUpdated = tonumber(p.lastUpdated) or time()
+    ArenaStickyDB.strategies = p.strategies
+    ArenaStickyDB.version = p.version
+    ArenaStickyDB.lastUpdated = p.lastUpdated
 end
 
 local function ToLegacyClassToken(token)
@@ -460,8 +497,6 @@ local DEFAULT_STRATEGIES = {
 
 local function EnsureDB()
     ArenaStickyDB = ArenaStickyDB or {}
-    ArenaStickyDB.version = ArenaStickyDB.version or 1
-    ArenaStickyDB.lastUpdated = ArenaStickyDB.lastUpdated or time()
     ArenaStickyDB.playerRoleOverride = ArenaStickyDB.playerRoleOverride or nil
     ArenaStickyDB.window = ArenaStickyDB.window or {
         x = 0,
@@ -472,8 +507,34 @@ local function EnsureDB()
         alpha = 0.95,
     }
 
-    -- Shared strategy pack (editable + synced)
+    -- Named profiles: each has strategies + version + lastUpdated (teammate sync uses active profile).
+    if type(ArenaStickyDB.profiles) ~= "table" then
+        local oldStrat = ArenaStickyDB.strategies
+        if type(oldStrat) ~= "table" then
+            oldStrat = {}
+        end
+        ArenaStickyDB.profiles = {
+            Default = {
+                version = tonumber(ArenaStickyDB.version) or 1,
+                lastUpdated = tonumber(ArenaStickyDB.lastUpdated) or time(),
+                strategies = oldStrat,
+            },
+        }
+        ArenaStickyDB.activeProfile = "Default"
+    end
+
+    ArenaStickyDB.activeProfile = ArenaStickyDB.activeProfile or "Default"
+    if not ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] then
+        ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] = {
+            version = 1,
+            lastUpdated = time(),
+            strategies = {},
+        }
+    end
+
+    SyncActiveProfilePointers()
     ArenaStickyDB.strategies = MergeMissingStrategies(ArenaStickyDB.strategies, DEFAULT_STRATEGIES)
+    SyncActiveProfilePointers()
 end
 
 --- Full vs compact Kill/CC line depending on minimized state (used by sticky + editor).
@@ -1071,6 +1132,10 @@ UpdateNotesForComp = function(compKey, allowFallbackRole, forcedRole)
         return
     end
     ArenaSticky.currentCompKey = compKey
+    if compKey and type(compKey) == "string" and compKey ~= "" then
+        EnsureDB()
+        ArenaStickyDB.lastPlayedCompKey = compKey
+    end
     local role = forcedRole or GetMyRole()
 
     local detectedKey = compKey
@@ -1100,6 +1165,133 @@ UpdateNotesForComp = function(compKey, allowFallbackRole, forcedRole)
     ArenaSticky.bodyText:SetText(roleText)
 end
 
+function ArenaSticky.SyncActiveProfileMeta()
+    EnsureDB()
+    local n = ArenaStickyDB.activeProfile or "Default"
+    local p = ArenaStickyDB.profiles and ArenaStickyDB.profiles[n]
+    if not p then
+        return
+    end
+    p.version = ArenaStickyDB.version or p.version
+    p.lastUpdated = ArenaStickyDB.lastUpdated or p.lastUpdated
+end
+
+function ArenaSticky.GetSortedProfileNames()
+    EnsureDB()
+    local t = {}
+    for name in pairs(ArenaStickyDB.profiles or {}) do
+        table.insert(t, name)
+    end
+    table.sort(t)
+    return t
+end
+
+function ArenaSticky.CreateProfile(rawName)
+    local name, err = ValidateProfileName(rawName)
+    if not name then
+        return false, err
+    end
+    EnsureDB()
+    if ArenaStickyDB.profiles[name] then
+        return false, "A profile named '" .. name .. "' already exists."
+    end
+    ArenaStickyDB.profiles[name] = {
+        version = 1,
+        lastUpdated = time(),
+        strategies = MergeMissingStrategies({}, DEFAULT_STRATEGIES),
+    }
+    return true
+end
+
+function ArenaSticky.CopyProfile(rawFrom, rawTo)
+    local fromName, e1 = ValidateProfileName(rawFrom)
+    local toName, e2 = ValidateProfileName(rawTo)
+    if not fromName then
+        return false, e1
+    end
+    if not toName then
+        return false, e2
+    end
+    EnsureDB()
+    if not ArenaStickyDB.profiles[fromName] then
+        return false, "Unknown source profile."
+    end
+    if ArenaStickyDB.profiles[toName] then
+        return false, "Target profile already exists."
+    end
+    ArenaStickyDB.profiles[toName] = {
+        version = ArenaStickyDB.profiles[fromName].version or 1,
+        lastUpdated = time(),
+        strategies = DeepCopy(ArenaStickyDB.profiles[fromName].strategies),
+    }
+    return true
+end
+
+function ArenaSticky.DeleteProfile(rawName)
+    local name, err = ValidateProfileName(rawName)
+    if not name then
+        return false, err
+    end
+    EnsureDB()
+    if not ArenaStickyDB.profiles[name] then
+        return false, "Unknown profile."
+    end
+    local count = 0
+    for _ in pairs(ArenaStickyDB.profiles) do
+        count = count + 1
+    end
+    if count <= 1 then
+        return false, "Cannot delete the only profile."
+    end
+    ArenaStickyDB.profiles[name] = nil
+    if ArenaStickyDB.activeProfile == name then
+        local names = ArenaSticky.GetSortedProfileNames()
+        ArenaStickyDB.activeProfile = names[1] or "Default"
+        if not ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] then
+            ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] = {
+                version = 1,
+                lastUpdated = time(),
+                strategies = MergeMissingStrategies({}, DEFAULT_STRATEGIES),
+            }
+        end
+        SyncActiveProfilePointers()
+        if ArenaSticky.currentCompKey then
+            UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+        end
+        if ArenaSticky.EditorRefreshFromProfile then
+            ArenaSticky.EditorRefreshFromProfile()
+        end
+    end
+    return true
+end
+
+function ArenaSticky.SwitchProfile(rawName)
+    local name, err = ValidateProfileName(rawName)
+    if not name then
+        print("|cffff4444ArenaSticky|r: " .. tostring(err))
+        return false
+    end
+    EnsureDB()
+    if not ArenaStickyDB.profiles[name] then
+        print("|cffff4444ArenaSticky|r: Unknown profile: " .. name)
+        return false
+    end
+    ArenaStickyDB.activeProfile = name
+    SyncActiveProfilePointers()
+    if ArenaSticky.currentCompKey then
+        UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+    end
+    if ArenaSticky.EditorRefreshFromProfile then
+        ArenaSticky.EditorRefreshFromProfile()
+    end
+    print("|cff33ff99ArenaSticky|r: Active profile: " .. name)
+    return true
+end
+
+function ArenaSticky.GetPlayerRoleToken()
+    return GetMyRole()
+end
+
 function ArenaSticky:BroadcastStrategies()
     if not C_ChatInfo then return end
     local payloadTable = {
@@ -1115,10 +1307,11 @@ function ArenaSticky:BroadcastStrategies()
     C_ChatInfo.SendAddonMessage(PREFIX, payload, IsInGroup(2) and "INSTANCE_CHAT" or (IsInRaid() and "RAID" or "PARTY"))
 end
 
-local function SerializeStrategiesSimple()
+local function SerializeStrategiesSimple(strategiesTable)
     -- Stable custom format:
     -- comp~kill~cc~<ROLE_TOKENS...> ; ...
     -- (Values are escaped for "~" and ";" using backticks.)
+    strategiesTable = strategiesTable or ArenaStickyDB.strategies
     local function esc(s)
         s = s or ""
         s = s:gsub("`", "``")
@@ -1127,7 +1320,7 @@ local function SerializeStrategiesSimple()
         return s
     end
     local parts = {}
-    for comp, data in pairs(ArenaStickyDB.strategies) do
+    for comp, data in pairs(strategiesTable or {}) do
         local h = data.header or {}
         local r = data.roles or {}
         local segParts = { esc(comp), esc(h.kill), esc(h.cc) }
@@ -1170,36 +1363,306 @@ local function DeserializeStrategiesSimple(str)
     return out
 end
 
+function ArenaSticky.BuildExportStringActiveProfile()
+    EnsureDB()
+    local name = ArenaStickyDB.activeProfile or "Default"
+    local blob = SerializeStrategiesSimple(ArenaStickyDB.strategies)
+    return string.format("AS1|%s|%d|%d|%s", name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), blob)
+end
+
+function ArenaSticky.BuildExportStringAllProfiles()
+    EnsureDB()
+    local lines = { "ASPACK1" }
+    for _, pname in ipairs(ArenaSticky.GetSortedProfileNames()) do
+        local p = ArenaStickyDB.profiles[pname]
+        local blob = SerializeStrategiesSimple(p and p.strategies or {})
+        table.insert(lines, string.format("%s|%d|%d|%s", pname, p.version or 1, p.lastUpdated or time(), blob))
+    end
+    return table.concat(lines, "\n")
+end
+
+function ArenaSticky.ImportSingleLineIntoActive(line)
+    local name, ver, ts, blob = line:match("^AS1|([^|]+)|(%d+)|(%d+)|(.*)$")
+    ver = tonumber(ver)
+    ts = tonumber(ts)
+    if not ver or not ts or not blob then
+        return false, "Could not parse AS1 line (wrong format or truncated)."
+    end
+    local strategies = DeserializeStrategiesSimple(blob)
+    EnsureDB()
+    local activeName = ArenaStickyDB.activeProfile or "Default"
+    local prof = ArenaStickyDB.profiles[activeName]
+    if not prof then
+        return false, "Internal error: no active profile."
+    end
+    prof.strategies = strategies
+    prof.version = ver
+    prof.lastUpdated = ts
+    SyncActiveProfilePointers()
+    if ArenaSticky.currentCompKey then
+        UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+    end
+    if ArenaSticky.EditorRefreshFromProfile then
+        ArenaSticky.EditorRefreshFromProfile()
+    end
+    print("|cff33ff99ArenaSticky|r: Imported notes into profile |cff00ccff" .. activeName .. "|r (v" .. tostring(ver) .. ").")
+    return true
+end
+
+function ArenaSticky.ImportPackText(fullText)
+    fullText = (fullText or ""):gsub("\r\n", "\n")
+    local lines = {}
+    for line in string.gmatch(fullText, "[^\n]+") do
+        table.insert(lines, line)
+    end
+    if not lines[1] or lines[1]:gsub("%s+", "") ~= "ASPACK1" then
+        return false, "Expected ASPACK1 header on line 1."
+    end
+    local newProfiles = {}
+    for i = 2, #lines do
+        local line = lines[i]:gsub("^%s+", ""):gsub("%s+$", "")
+        if line ~= "" then
+            local pname, ver, ts, blob = line:match("^([^|]+)|(%d+)|(%d+)|(.*)$")
+            ver = tonumber(ver)
+            ts = tonumber(ts)
+            if not pname or not ver or not ts or blob == nil then
+                return false, "Bad pack line " .. tostring(i) .. " (truncated or wrong format)."
+            end
+            newProfiles[pname] = {
+                version = ver,
+                lastUpdated = ts,
+                strategies = DeserializeStrategiesSimple(blob),
+            }
+        end
+    end
+    if not next(newProfiles) then
+        return false, "Pack contained no profiles."
+    end
+    EnsureDB()
+    local prevActive = ArenaStickyDB.activeProfile
+    ArenaStickyDB.profiles = newProfiles
+    if newProfiles[prevActive] then
+        ArenaStickyDB.activeProfile = prevActive
+    elseif newProfiles.Default then
+        ArenaStickyDB.activeProfile = "Default"
+    else
+        local names = ArenaSticky.GetSortedProfileNames()
+        ArenaStickyDB.activeProfile = names[1]
+    end
+    SyncActiveProfilePointers()
+    if ArenaSticky.currentCompKey then
+        UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+    end
+    if ArenaSticky.EditorRefreshFromProfile then
+        ArenaSticky.EditorRefreshFromProfile()
+    end
+    local n = 0
+    for _ in pairs(ArenaStickyDB.profiles or {}) do
+        n = n + 1
+    end
+    print("|cff33ff99ArenaSticky|r: Imported full profile pack (" .. tostring(n) .. " profiles). Active: |cff00ccff" .. tostring(ArenaStickyDB.activeProfile) .. "|r.")
+    return true
+end
+
+function ArenaSticky.ImportFromPaste(fullText)
+    fullText = (fullText or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if fullText == "" then
+        return false, "Paste was empty."
+    end
+    local first = fullText:match("^[^\n\r]+") or ""
+    first = first:gsub("^%s+", ""):gsub("%s+$", "")
+    if first == "ASPACK1" then
+        return ArenaSticky.ImportPackText(fullText)
+    end
+    if first:match("^AS1|") then
+        return ArenaSticky.ImportSingleLineIntoActive(first)
+    end
+    return false, "Not a valid ArenaSticky export (need AS1 or ASPACK1)."
+end
+
+StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
+    text = "Copy this string (Ctrl+C) to share or back up. One line = active profile only; multi-line = full pack.",
+    button1 = OKAY,
+    hasEditBox = 1,
+    wide = true,
+    whileDead = true,
+    timeout = 0,
+    hideOnEscape = true,
+    OnShow = function(self)
+        local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
+        if eb then
+            eb:SetMaxLetters(999999)
+            eb:SetText(ArenaSticky.lastExportString or "")
+            eb:SetFocus()
+            eb:HighlightText()
+        end
+    end,
+}
+
+StaticPopupDialogs["ARENASTICKY_IMPORT_TEXT"] = {
+    text = "Paste an AS1 line (one profile) or ASPACK1 block (replaces ALL profiles). Then click Import.",
+    button1 = "Import",
+    button2 = CANCEL,
+    hasEditBox = 1,
+    wide = true,
+    whileDead = true,
+    timeout = 0,
+    hideOnEscape = true,
+    OnShow = function(self)
+        local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
+        if eb then
+            eb:SetMaxLetters(999999)
+            eb:SetText("")
+        end
+    end,
+    OnAccept = function(self)
+        local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
+        local t = eb and eb:GetText() or ""
+        local ok, err = ArenaSticky.ImportFromPaste(t)
+        if ok then
+            print("|cff33ff99ArenaSticky|r: Import finished.")
+        else
+            print("|cffff4444ArenaSticky|r: " .. tostring(err))
+        end
+    end,
+}
+
+local ADDON_MSG_MAX = 255
+
+--- Split serialized blob into ≤255-char messages: STRATSYNC#ver#ts#idx#total#payload
+local function BuildStratSyncPayloadMessages(ver, ts, blob)
+    local lenB = #(blob or "")
+    if lenB == 0 then
+        return { string.format("STRATSYNC#%d#%d#%d#%d#", ver, ts, 1, 1) }
+    end
+    local n = math.max(1, math.ceil(lenB / 200))
+    for _ = 1, 80 do
+        local msgs = {}
+        local offset = 1
+        local i = 0
+        while offset <= lenB do
+            i = i + 1
+            local hdr = string.format("STRATSYNC#%d#%d#%d#%d#", ver, ts, i, n)
+            local room = ADDON_MSG_MAX - #hdr
+            if room < 1 then
+                return nil
+            end
+            local chunk = string.sub(blob, offset, offset + room - 1)
+            if #chunk == 0 then
+                return nil
+            end
+            table.insert(msgs, hdr .. chunk)
+            offset = offset + #chunk
+        end
+        if i == n then
+            return msgs
+        end
+        n = i
+    end
+    return nil
+end
+
+local function StratSyncBufferKey(sender, ver, ts)
+    return tostring(sender) .. "\001" .. tostring(ver) .. "\001" .. tostring(ts)
+end
+
+local function ApplyIncomingStrategies(incomingVersion, incomingTs, blob, sender)
+    EnsureDB()
+    local currentVersion = ArenaStickyDB.version or 0
+    local currentTs = ArenaStickyDB.lastUpdated or 0
+    if incomingVersion < currentVersion or (incomingVersion == currentVersion and incomingTs <= currentTs) then
+        return false
+    end
+    local strategies = DeserializeStrategiesSimple(blob)
+    local activeName = ArenaStickyDB.activeProfile or "Default"
+    local prof = ArenaStickyDB.profiles[activeName]
+    if not prof then
+        return false
+    end
+    prof.strategies = strategies
+    ArenaStickyDB.strategies = strategies
+    prof.version = incomingVersion
+    prof.lastUpdated = incomingTs
+    ArenaStickyDB.version = incomingVersion
+    ArenaStickyDB.lastUpdated = incomingTs
+    print("|cff33ff99ArenaSticky|r: Received updated strategies from " .. tostring(sender))
+
+    if ArenaSticky.currentCompKey then
+        UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+    end
+    return true
+end
+
+local function HandleStratSyncChunked(sender, ver, ts, idx, total, payload)
+    ver = tonumber(ver)
+    ts = tonumber(ts)
+    idx = tonumber(idx)
+    total = tonumber(total)
+    if not ver or not ts or not idx or not total or not payload then
+        return
+    end
+    local key = StratSyncBufferKey(sender, ver, ts)
+    local buf = stratSyncBuffers[key]
+    if not buf or buf.total ~= total then
+        buf = { total = total, parts = {}, ver = ver, ts = ts }
+        stratSyncBuffers[key] = buf
+    end
+    buf.parts[idx] = payload
+
+    local complete = true
+    local blob = ""
+    for j = 1, total do
+        local p = buf.parts[j]
+        if not p then
+            complete = false
+            break
+        end
+        blob = blob .. p
+    end
+    if not complete then
+        return
+    end
+    stratSyncBuffers[key] = nil
+    ApplyIncomingStrategies(ver, ts, blob, sender)
+end
+
 function ArenaSticky:PushFullSync()
     if not C_ChatInfo then return end
     local blob = SerializeStrategiesSimple()
-    local msg = ("STRATSYNC#%d#%d#%s"):format(ArenaStickyDB.version, ArenaStickyDB.lastUpdated, blob)
-    C_ChatInfo.SendAddonMessage(PREFIX, msg, IsInGroup(2) and "INSTANCE_CHAT" or (IsInRaid() and "RAID" or "PARTY"))
+    local ver = ArenaStickyDB.version or 0
+    local ts = ArenaStickyDB.lastUpdated or 0
+    local msgs = BuildStratSyncPayloadMessages(ver, ts, blob)
+    if not msgs or #msgs == 0 then
+        print("|cffff4444ArenaSticky|r: Could not package strategies for sync (try fewer / shorter notes).")
+        return
+    end
+    local channel = IsInGroup(2) and "INSTANCE_CHAT" or (IsInRaid() and "RAID" or "PARTY")
+    for i, m in ipairs(msgs) do
+        local delay = (i - 1) * 0.06
+        C_Timer.After(delay, function()
+            C_ChatInfo.SendAddonMessage(PREFIX, m, channel)
+        end)
+    end
 end
 
 local function HandleAddonMessage(prefix, msg, channel, sender)
-    if prefix ~= PREFIX or sender == UnitName("player") then return end
+    if prefix ~= PREFIX then return end
+    local myName = UnitName("player")
+    if sender and myName and sender == myName then return end
     if not msg then return end
 
-    local cmd, v, ts, blob = strsplit("#", msg, 4)
-    if cmd == "STRATSYNC" and v and ts and blob then
-        local incomingVersion = tonumber(v) or 0
-        local incomingTs = tonumber(ts) or 0
-        local currentVersion = ArenaStickyDB.version or 0
-        local currentTs = ArenaStickyDB.lastUpdated or 0
-
-        if incomingVersion > currentVersion or (incomingVersion == currentVersion and incomingTs > currentTs) then
-            ArenaStickyDB.strategies = DeserializeStrategiesSimple(blob)
-            ArenaStickyDB.version = incomingVersion
-            ArenaStickyDB.lastUpdated = incomingTs
-            print("|cff33ff99ArenaSticky|r: Received updated strategies from " .. sender)
-
-            if ArenaSticky.currentCompKey then
-                UpdateNotesForComp(ArenaSticky.currentCompKey, true)
-            end
+    local cmd = strsplit("#", msg, 2)
+    if cmd == "STRATSYNC" then
+        local v1, ts1, idx1, n1, payload = msg:match("^STRATSYNC#(%d+)#(%d+)#(%d+)#(%d+)#(.*)$")
+        if v1 and ts1 and idx1 and n1 and payload ~= nil then
+            HandleStratSyncChunked(sender or "?", v1, ts1, idx1, n1, payload)
+            return
+        end
+        local v2, ts2, blob = msg:match("^STRATSYNC#(%d+)#(%d+)#(.*)$")
+        if v2 and ts2 and blob ~= nil then
+            ApplyIncomingStrategies(tonumber(v2) or 0, tonumber(ts2) or 0, blob, sender or "?")
         end
     elseif cmd == "FULLSYNC" then
-        -- A teammate pinged for data, push ours.
         ArenaSticky:PushFullSync()
     end
 end
@@ -1326,12 +1789,26 @@ end
 
 local function PrintHelp()
     print("|cff33ff99ArenaSticky|r commands:")
-    print("  /as help   (also: /arenasticky, /asticky — if /as is used by another addon)")
+    print("  /as help   (also: /ar, /arenasticky, /asticky — if /as is used by another addon)")
     print("  /asdebug   (prints diagnostics even when /as is taken)")
     print("  /as hide   (stops auto-opening the sticky until next match or /as show)")
     print("  /as test        (random comp)   |   /as test rmp   (named alias)")
     print("  /as debug")
     print("  /as edit | show | hide | resetwindow | sync | request")
+    print("  /as profile …   (list | use <name> | new <name> | copy <a> <b> | delete <name>)")
+    print("  /as export      (active profile)   |   /as export all   (all profiles, share/backup)")
+    print("  /as import      (paste AS1 or ASPACK1 from web/discord)")
+end
+
+local function PrintProfileList()
+    EnsureDB()
+    local cur = ArenaStickyDB.activeProfile or "?"
+    print("|cff33ff99ArenaSticky|r profiles (|cff00ccffactive|r = " .. cur .. "):")
+    for _, n in ipairs(ArenaSticky.GetSortedProfileNames()) do
+        local mark = (n == cur) and "  |cff33ff99← active|r" or ""
+        print("  " .. n .. mark)
+    end
+    print("|cff888888/as profile use <name>  ·  new  ·  copy <src> <dst>  ·  delete|r")
 end
 
 local function ResetWindow()
@@ -1400,6 +1877,7 @@ end
 SLASH_ARENASTICKY1 = "/as"
 SLASH_ARENASTICKY2 = "/arenasticky"
 SLASH_ARENASTICKY3 = "/asticky"
+SLASH_ARENASTICKY4 = "/ar"
 SlashCmdList["ARENASTICKY"] = function(msg)
     msg = (msg or ""):match("^%s*(.-)%s*$") or ""
     local lower = msg:lower()
@@ -1448,6 +1926,91 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     if a == "request" then
         C_ChatInfo.SendAddonMessage(PREFIX, "FULLSYNC#0#0#", IsInGroup(2) and "INSTANCE_CHAT" or (IsInRaid() and "RAID" or "PARTY"))
         print("|cff33ff99ArenaSticky|r: Requested strategy sync.")
+        return
+    end
+
+    if a == "export" then
+        EnsureInitialized()
+        EnsureDB()
+        local sub = ((b or ""):match("^(%S+)") or ""):lower()
+        if sub == "all" or sub == "pack" then
+            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringAllProfiles()
+            print("|cff33ff99ArenaSticky|r: Exporting |cff00ccffall profiles|r (multi-line). Copy from popup.")
+        else
+            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringActiveProfile()
+            print("|cff33ff99ArenaSticky|r: Exporting |cff00ccff" .. tostring(ArenaStickyDB.activeProfile or "Default") .. "|r (one line). Copy from popup.")
+        end
+        StaticPopup_Show("ARENASTICKY_EXPORT_TEXT")
+        return
+    end
+
+    if a == "import" then
+        EnsureInitialized()
+        StaticPopup_Show("ARENASTICKY_IMPORT_TEXT")
+        return
+    end
+
+    if a == "profile" or a == "profiles" then
+        local restOrig = msg:match("^%s*[Pp][Rr][Oo][Ff][Ii][Ll][Ee]%s+(.*)$")
+            or msg:match("^%s*[Pp][Rr][Oo][Ff][Ii][Ll][Ee][Ss]%s+(.*)$")
+            or ""
+        restOrig = restOrig:gsub("^%s+", ""):gsub("%s+$", "")
+        if restOrig == "" then
+            PrintProfileList()
+            return
+        end
+        local sub = (restOrig:match("^(%S+)") or ""):lower()
+        local tail = restOrig:match("^%S+%s+(.*)$") or ""
+        tail = tail:gsub("^%s+", ""):gsub("%s+$", "")
+        if sub == "list" then
+            PrintProfileList()
+            return
+        elseif sub == "use" then
+            if tail == "" then
+                print("|cffff4444ArenaSticky|r: Usage: /as profile use <name>")
+                return
+            end
+            ArenaSticky.SwitchProfile(tail)
+            return
+        elseif sub == "new" then
+            if tail == "" then
+                print("|cffff4444ArenaSticky|r: Usage: /as profile new <name>")
+                return
+            end
+            local ok, err = ArenaSticky.CreateProfile(tail)
+            if ok then
+                print("|cff33ff99ArenaSticky|r: Created profile |cff00ccff" .. tail .. "|r. Switch with |cff888888/as profile use " .. tail .. "|r")
+            else
+                print("|cffff4444ArenaSticky|r: " .. tostring(err))
+            end
+            return
+        elseif sub == "delete" then
+            if tail == "" then
+                print("|cffff4444ArenaSticky|r: Usage: /as profile delete <name>")
+                return
+            end
+            local ok, err = ArenaSticky.DeleteProfile(tail)
+            if ok then
+                print("|cff33ff99ArenaSticky|r: Deleted profile |cff00ccff" .. tail .. "|r.")
+            else
+                print("|cffff4444ArenaSticky|r: " .. tostring(err))
+            end
+            return
+        elseif sub == "copy" then
+            local src, dst = tail:match("^(%S+)%s+(%S+)$")
+            if not src or not dst then
+                print("|cffff4444ArenaSticky|r: Usage: /as profile copy <src> <dst>  (single-word names)")
+                return
+            end
+            local ok, err = ArenaSticky.CopyProfile(src, dst)
+            if ok then
+                print("|cff33ff99ArenaSticky|r: Copied |cff00ccff" .. src .. "|r → |cff00ccff" .. dst .. "|r")
+            else
+                print("|cffff4444ArenaSticky|r: " .. tostring(err))
+            end
+            return
+        end
+        PrintProfileList()
         return
     end
 

@@ -1,8 +1,8 @@
 ## Interface: 20504
 ## Title: ArenaSticky
-## Notes: Role-filtered arena sticky notes with team sync
+## Notes: Arena sticky notes, teammate sync, named profiles, import/export
 ## Author: You
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: ArenaStickyDB
 ## OptionalDeps:
 ArenaSticky.lua
