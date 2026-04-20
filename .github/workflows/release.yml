@@ -1,0 +1,31 @@
+name: Package and Upload
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate CurseForge project id
+        run: |
+          if [ "${{ vars.CURSEFORGE_PROJECT_ID }}" = "" ]; then
+            echo "Missing repository variable CURSEFORGE_PROJECT_ID."
+            echo "Set it in GitHub: Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+
+      - name: Inject CurseForge project id
+        run: |
+          sed -i "s/PROJECT_ID_PLACEHOLDER/${{ vars.CURSEFORGE_PROJECT_ID }}/g" .pkgmeta
+
+      - name: Package and publish to CurseForge
+        uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_TOKEN }}
