@@ -4,3 +4,6 @@
 .cursor*
 *.code-workspace
 ArenaSticky_backup_prelink/
+
+# Local Python / helper scripts (paths, WTF patching); not shipped with the addon
+tools/

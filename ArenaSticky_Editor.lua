@@ -74,9 +74,15 @@ local function GetSortedCompKeys()
     return keys
 end
 
+--- Strip legacy "N-" prefix (old saves) so token count matches 2v2/3v3. Current keys are class tokens only.
+local function GetArenaCompBody(key)
+    if not key or key == "" then return "" end
+    return (key:match("^%d%-(.+)$")) or key
+end
+
 local function GetCompSizeFromKey(key)
     local count = 0
-    for _ in (key or ""):gmatch("[^-]+") do
+    for _ in GetArenaCompBody(key):gmatch("[^-]+") do
         count = count + 1
     end
     return count
@@ -148,11 +154,19 @@ local function RefreshCompDropdown(f)
     end
 end
 
+local BUTTON_W = 92
+local BUTTON_H = 22
+local PROFILE_BTN_W = 176
+
 local function EnsureEditor()
+    -- Rebuild when editor layout / profile controls change.
+    if ArenaSticky.editor and (not ArenaSticky.editor.profileDropdown or not ArenaSticky.editor.copyFromDropdown) then
+        ArenaSticky.editor = nil
+    end
     if ArenaSticky.editor then return ArenaSticky.editor end
 
     local f = CreateFrame("Frame", "ArenaStickyEditorFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate")
-    f:SetSize(700, 530)
+    f:SetSize(700, 640)
     f:SetPoint("CENTER", 120, 0)
     f:SetClampedToScreen(true)
     f:SetMovable(true)
@@ -171,15 +185,6 @@ local function EnsureEditor()
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 12, -10)
     title:SetText("ArenaSticky Strategy Editor")
-
-    -- Profile under the title on the LEFT (avoids covering "Or select saved comp" on the right).
-    local profileLbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    profileLbl:SetPoint("TOPLEFT", 12, -32)
-    profileLbl:SetText("Profile")
-
-    f.profileDropdown = CreateFrame("Frame", "ArenaStickyProfileDropdown", f, "UIDropDownMenuTemplate")
-    f.profileDropdown:SetPoint("TOPLEFT", 12, -50)
-    UIDropDownMenu_SetWidth(f.profileDropdown, 200)
 
     local function MakeLabel(text, x, y)
         local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -240,7 +245,7 @@ local function EnsureEditor()
 
     f.SetCompSlotsFromKey = function(self, key)
         local parts = {}
-        for p in (key or ""):gmatch("[^-]+") do
+        for p in GetArenaCompBody(key or ""):gmatch("[^-]+") do
             table.insert(parts, p:upper())
         end
         self.compSlot1Value = parts[1] or "DISC"
@@ -295,17 +300,23 @@ local function EnsureEditor()
         end
     end
 
-    MakeLabel("Comp Key (e.g. RESTO-WARLOCK-WARRIOR)", 12, -82)
-    f.compInput = MakeInput(340, 24, 12, -100, false)
-    MakeLabel("Or select saved comp", 370, -82)
+    -- Tighter layout under title (reduces empty band below "ArenaSticky Strategy Editor")
+    local Y0 = 34
+    local KILL_CC_FIELD_SHIFT_X = 8
+    MakeLabel("Comp Key (sorted tokens: 2 specs = 2v2, 3 = 3v3)", 12, -82 + Y0)
+    f.compInput = MakeInput(340, 24, 12 + KILL_CC_FIELD_SHIFT_X, -100 + Y0, false)
+    MakeLabel("Or select saved comp", 370, -82 + Y0)
     f.compDropdown = CreateFrame("Frame", "ArenaStickyCompDropdown", f, "UIDropDownMenuTemplate")
-    f.compDropdown:SetPoint("TOPLEFT", 350, -96)
+    -- Align with Comp Key editbox (1px above compInput TOP so the dropdown isn’t a hair low)
+    f.compDropdown:SetPoint("TOPLEFT", 350, -101 + Y0)
     UIDropDownMenu_SetWidth(f.compDropdown, 220)
     UIDropDownMenu_SetText(f.compDropdown, "Select existing comp...")
 
-    MakeLabel("Bracket", 12, -132)
+    -- Label→dropdown gap matches “Or select saved comp” row (19px: -82 → -101)
+    local BRACKET_ROW_DD_Y = -151 + Y0
+    MakeLabel("Bracket", 12, -132 + Y0)
     f.bracketDropdown = CreateFrame("Frame", "ArenaStickyBracketDropdown", f, "UIDropDownMenuTemplate")
-    f.bracketDropdown:SetPoint("TOPLEFT", 0, -144)
+    f.bracketDropdown:SetPoint("TOPLEFT", 0, BRACKET_ROW_DD_Y)
     UIDropDownMenu_SetWidth(f.bracketDropdown, 90)
     UIDropDownMenu_Initialize(f.bracketDropdown, function(self, level)
         for _, bracket in ipairs({ "2v2", "3v3" }) do
@@ -335,15 +346,15 @@ local function EnsureEditor()
     UIDropDownMenu_SetSelectedName(f.bracketDropdown, f.selectedBracket)
     UIDropDownMenu_SetText(f.bracketDropdown, BracketDropdownLabel(f.selectedBracket))
 
-    MakeLabel("Build Comp from Class Dropdowns", 185, -132)
+    MakeLabel("Build Comp from Class Dropdowns", 185, -132 + Y0)
     f.compSlot1 = CreateFrame("Frame", "ArenaStickyCompSlot1Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot1:SetPoint("TOPLEFT", 175, -144)
+    f.compSlot1:SetPoint("TOPLEFT", 175, BRACKET_ROW_DD_Y)
     UIDropDownMenu_SetWidth(f.compSlot1, 130)
     f.compSlot2 = CreateFrame("Frame", "ArenaStickyCompSlot2Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot2:SetPoint("TOPLEFT", 335, -144)
+    f.compSlot2:SetPoint("TOPLEFT", 335, BRACKET_ROW_DD_Y)
     UIDropDownMenu_SetWidth(f.compSlot2, 130)
     f.compSlot3 = CreateFrame("Frame", "ArenaStickyCompSlot3Dropdown", f, "UIDropDownMenuTemplate")
-    f.compSlot3:SetPoint("TOPLEFT", 495, -144)
+    f.compSlot3:SetPoint("TOPLEFT", 495, BRACKET_ROW_DD_Y)
     UIDropDownMenu_SetWidth(f.compSlot3, 130)
 
     BuildCompSlotDropdown(f.compSlot1, "compSlot1Value")
@@ -359,15 +370,15 @@ local function EnsureEditor()
     UIDropDownMenu_SetText(f.compSlot2, DropdownSpecLabel(f.compSlot2Value))
     UIDropDownMenu_SetText(f.compSlot3, DropdownSpecLabel(f.compSlot3Value))
 
-    MakeLabel("Kill Target", 12, -188)
-    f.killInput = MakeInput(170, 24, 12, -206, false)
+    MakeLabel("Kill Target", 12, -188 + Y0)
+    f.killInput = MakeInput(170, 24, 12 + KILL_CC_FIELD_SHIFT_X, -206 + Y0, false)
 
-    MakeLabel("CC Target", 200, -188)
-    f.ccInput = MakeInput(170, 24, 200, -206, false)
+    MakeLabel("CC Target", 200, -188 + Y0)
+    f.ccInput = MakeInput(170, 24, 200 + KILL_CC_FIELD_SHIFT_X, -206 + Y0, false)
 
-    MakeLabel("Class Notes (per class in this comp)", 12, -238)
+    MakeLabel("Class Notes (per class in this comp)", 12, -238 + Y0)
     f.noteRows = {}
-    local rowY = { -258, -334, -410 }
+    local rowY = { -258 + Y0, -334 + Y0, -410 + Y0 }
     for i = 1, 3 do
         local row = {}
         row.label = MakeLabel(("Class %d"):format(i), 12, rowY[i])
@@ -403,39 +414,282 @@ local function EnsureEditor()
     end
     f:UpdateVisibleNoteRows()
 
+    local bottomY = 12
+    local PUSH_GAP = 10
+    local ROW_GAP = 5
+    -- Profile stack: bottom-right of frame, tight vertical spacing
+    local PROFILE_STACK_V_GAP = 4
+    local PROFILE_LABEL_GAP = 3
+    -- Space between profile dropdown bottom and “Copy notes from” label (smaller = tighter)
+    local PROFILE_TO_COPY_LBL_GAP = 2
+    -- Slightly lower than Load/Save row so the control lines up visually with Push to Team
+    local COPY_FROM_DD_BOTTOM_INSET = bottomY - 4
+
+    -- Bottom row: Load / Save. Above them: Import / Export (per user layout).
     local loadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    loadBtn:SetSize(80, 24)
-    loadBtn:SetPoint("BOTTOMLEFT", 12, 12)
+    loadBtn:SetPoint("BOTTOMLEFT", 12, bottomY)
     loadBtn:SetText("Load")
+    loadBtn:SetSize(BUTTON_W, BUTTON_H)
 
     local saveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    saveBtn:SetSize(80, 24)
     saveBtn:SetPoint("LEFT", loadBtn, "RIGHT", 8, 0)
     saveBtn:SetText("Save")
-
-    local pushBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    pushBtn:SetSize(110, 24)
-    pushBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
-    pushBtn:SetText("Push to Team")
-
-    local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    exportBtn:SetSize(88, 22)
-    exportBtn:SetPoint("BOTTOMLEFT", 12, 36)
-    exportBtn:SetText("Export…")
+    saveBtn:SetSize(BUTTON_W, BUTTON_H)
 
     local importBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    importBtn:SetSize(88, 22)
-    importBtn:SetPoint("LEFT", exportBtn, "RIGHT", 8, 0)
-    importBtn:SetText("Import…")
+    importBtn:SetSize(BUTTON_W, BUTTON_H)
+    importBtn:SetText("Import")
+    importBtn:SetPoint("BOTTOMLEFT", loadBtn, "TOPLEFT", 0, ROW_GAP)
+
+    local exportBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    exportBtn:SetSize(BUTTON_W, BUTTON_H)
+    exportBtn:SetText("Export")
+    exportBtn:SetPoint("BOTTOMLEFT", saveBtn, "TOPLEFT", 0, ROW_GAP)
+
+    local pushBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    pushBtn:SetPoint("LEFT", saveBtn, "RIGHT", PUSH_GAP, 0)
+    pushBtn:SetText("Push to Team")
+    pushBtn:SetSize(118, BUTTON_H)
 
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn:SetSize(80, 24)
-    closeBtn:SetPoint("BOTTOMRIGHT", -12, 12)
+    closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -10)
     closeBtn:SetText("Close")
+    closeBtn:SetSize(80, BUTTON_H)
+
+    local profileHeaderLbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    profileHeaderLbl:SetText("Active profile")
+
+    local profileDD = CreateFrame("Frame", nil, f, "UIDropDownMenuTemplate")
+    UIDropDownMenu_SetWidth(profileDD, math.max(PROFILE_BTN_W, 168))
+    if UIDropDownMenu_JustifyText then
+        UIDropDownMenu_JustifyText(profileDD, "LEFT")
+    end
+
+    local copyFromHeader = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    copyFromHeader:SetText("Copy notes from...")
+
+    local copyFromDD = CreateFrame("Frame", nil, f, "UIDropDownMenuTemplate")
+    UIDropDownMenu_SetWidth(copyFromDD, math.max(PROFILE_BTN_W, 168))
+    if UIDropDownMenu_JustifyText then
+        UIDropDownMenu_JustifyText(copyFromDD, "LEFT")
+    end
 
     f.status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    f.status:SetPoint("BOTTOMLEFT", pushBtn, "TOPLEFT", 0, 6)
+    f.status:SetJustifyH("RIGHT")
+    f.status:SetJustifyV("MIDDLE")
     f.status:SetText("")
+
+    local function DropDownSetText(dd, text)
+        if UIDropDownMenu_SetText then
+            UIDropDownMenu_SetText(dd, text)
+        elseif dd and dd.Text then
+            dd.Text:SetText(text)
+        end
+    end
+
+    local function LayoutBottomChrome()
+        loadBtn:SetSize(BUTTON_W, BUTTON_H)
+        saveBtn:SetSize(BUTTON_W, BUTTON_H)
+        exportBtn:SetSize(BUTTON_W, BUTTON_H)
+        importBtn:SetSize(BUTTON_W, BUTTON_H)
+        pushBtn:SetSize(118, BUTTON_H)
+        closeBtn:SetSize(80, BUTTON_H)
+        UIDropDownMenu_SetWidth(profileDD, math.max(PROFILE_BTN_W, 168))
+        UIDropDownMenu_SetWidth(copyFromDD, math.max(PROFILE_BTN_W, 168))
+
+        -- Stack (bottom → top): copy dropdown, “Copy notes from” (centered on dd), profile dd, “Active profile” (centered on dd) — bottom-right
+        copyFromDD:ClearAllPoints()
+        copyFromDD:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, COPY_FROM_DD_BOTTOM_INSET)
+        copyFromDD:SetFrameLevel((closeBtn:GetFrameLevel() or 0) + 5)
+
+        copyFromHeader:ClearAllPoints()
+        copyFromHeader:SetPoint("BOTTOM", copyFromDD, "TOP", 0, PROFILE_STACK_V_GAP)
+        copyFromHeader:SetPoint("LEFT", copyFromDD, "LEFT", 0, 0)
+        copyFromHeader:SetPoint("RIGHT", copyFromDD, "RIGHT", 0, 0)
+        copyFromHeader:SetJustifyH("CENTER")
+
+        profileDD:ClearAllPoints()
+        profileDD:SetPoint("BOTTOMRIGHT", copyFromHeader, "TOPRIGHT", 0, PROFILE_TO_COPY_LBL_GAP)
+        profileDD:SetFrameLevel((closeBtn:GetFrameLevel() or 0) + 5)
+
+        profileHeaderLbl:ClearAllPoints()
+        profileHeaderLbl:SetPoint("BOTTOM", profileDD, "TOP", 0, PROFILE_LABEL_GAP)
+        profileHeaderLbl:SetPoint("LEFT", profileDD, "LEFT", 0, 0)
+        profileHeaderLbl:SetPoint("RIGHT", profileDD, "RIGHT", 0, 0)
+        profileHeaderLbl:SetJustifyH("CENTER")
+
+        -- Status above Import/Export only (Loaded/Saved/etc.), not centered under the profile stack
+        f.status:ClearAllPoints()
+        f.status:SetPoint("BOTTOMLEFT", importBtn, "TOPLEFT", 0, 6)
+        f.status:SetPoint("BOTTOMRIGHT", exportBtn, "TOPRIGHT", 0, 6)
+        f.status:SetJustifyH("LEFT")
+    end
+
+    local function RefreshProfileDropdown()
+        if not profileDD or not ArenaSticky.GetSortedProfileNames or not ArenaSticky.SwitchProfile then
+            return
+        end
+        UIDropDownMenu_Initialize(profileDD, function()
+            local names = ArenaSticky.GetSortedProfileNames()
+            for _, pname in ipairs(names) do
+                local name = pname
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = name
+                info.func = function()
+                    ArenaSticky.SwitchProfile(name)
+                end
+                info.checked = (name == ((ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default"))
+                UIDropDownMenu_AddButton(info)
+            end
+            local delInfo = UIDropDownMenu_CreateInfo()
+            delInfo.text = "Delete selected profile"
+            delInfo.notCheckable = true
+            delInfo.func = function()
+                local cur = (ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default"
+                StaticPopupDialogs["ARENASTICKY_EDITOR_DELETE_PROFILE"].text =
+                    'Delete profile "' .. cur .. '"? This cannot be undone.'
+                StaticPopup_Show("ARENASTICKY_EDITOR_DELETE_PROFILE")
+            end
+            UIDropDownMenu_AddButton(delInfo)
+
+            local newInfo = UIDropDownMenu_CreateInfo()
+            newInfo.text = "Create new profile"
+            newInfo.notCheckable = true
+            newInfo.func = function()
+                StaticPopup_Show("ARENASTICKY_EDITOR_NEW_PROFILE")
+            end
+            UIDropDownMenu_AddButton(newInfo)
+        end)
+        DropDownSetText(profileDD, (ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default")
+        LayoutBottomChrome()
+    end
+
+    local function RefreshCopyFromDropdown()
+        if not copyFromDD or not ArenaSticky.CopyNotesFromProfileToActive or not ArenaSticky.GetSortedProfileNames then
+            return
+        end
+        UIDropDownMenu_Initialize(copyFromDD, function()
+            local active = (ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default"
+            local titleInfo = UIDropDownMenu_CreateInfo()
+            titleInfo.text = "Copy into active profile:"
+            titleInfo.isTitle = true
+            titleInfo.notCheckable = true
+            UIDropDownMenu_AddButton(titleInfo)
+            local others = false
+            for _, pname in ipairs(ArenaSticky.GetSortedProfileNames()) do
+                if pname ~= active then
+                    others = true
+                    local name = pname
+                    local info = UIDropDownMenu_CreateInfo()
+                    info.text = name
+                    info.func = function()
+                        local ok, err = ArenaSticky.CopyNotesFromProfileToActive(name)
+                        if ok then
+                            f.status:SetText("Copied notes from: " .. name)
+                        else
+                            f.status:SetText(tostring(err or "Could not copy notes."))
+                        end
+                        DropDownSetText(copyFromDD, "Copy notes from...")
+                    end
+                    UIDropDownMenu_AddButton(info)
+                end
+            end
+            if not others then
+                local emptyInfo = UIDropDownMenu_CreateInfo()
+                emptyInfo.text = "(no other profiles)"
+                emptyInfo.disabled = true
+                emptyInfo.notCheckable = true
+                UIDropDownMenu_AddButton(emptyInfo)
+            end
+        end)
+        DropDownSetText(copyFromDD, "Copy notes from...")
+        LayoutBottomChrome()
+    end
+
+    if not StaticPopupDialogs["ARENASTICKY_EDITOR_DELETE_PROFILE"] then
+        StaticPopupDialogs["ARENASTICKY_EDITOR_DELETE_PROFILE"] = {
+            text = "Delete this profile?",
+            button1 = DELETE or "Delete",
+            button2 = CANCEL,
+            OnAccept = function()
+                local cur = ArenaStickyDB and ArenaStickyDB.activeProfile
+                if not cur or not ArenaSticky.DeleteProfile then
+                    return
+                end
+                local ok, err = ArenaSticky.DeleteProfile(cur)
+                if ok then
+                    if ArenaSticky.editor and ArenaSticky.editor.status then
+                        ArenaSticky.editor.status:SetText("Deleted profile: " .. tostring(cur))
+                    end
+                elseif ArenaSticky.editor and ArenaSticky.editor.status then
+                    ArenaSticky.editor.status:SetText(tostring(err or "Could not delete profile."))
+                end
+                if ArenaSticky.editor and ArenaSticky.editor.RefreshProfileDropdown then
+                    ArenaSticky.editor:RefreshProfileDropdown()
+                end
+                if ArenaSticky.editor and ArenaSticky.editor.RefreshCopyFromDropdown then
+                    ArenaSticky.editor:RefreshCopyFromDropdown()
+                end
+            end,
+            timeout = 0,
+            whileDead = 1,
+            hideOnEscape = 1,
+            preferredIndex = 3,
+        }
+    end
+
+    if not StaticPopupDialogs["ARENASTICKY_EDITOR_NEW_PROFILE"] then
+        StaticPopupDialogs["ARENASTICKY_EDITOR_NEW_PROFILE"] = {
+            text = "Name for the new profile:",
+            button1 = ACCEPT or OKAY,
+            button2 = CANCEL,
+            hasEditBox = 1,
+            maxLetters = 40,
+            OnShow = function(self)
+                local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
+                if eb then
+                    eb:SetText("")
+                    eb:SetFocus()
+                end
+            end,
+            OnAccept = function(self)
+                local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
+                local raw = eb and eb:GetText() or ""
+                local ok, nameOrErr = ArenaSticky.CreateProfile(raw)
+                if ok then
+                    ArenaSticky.SwitchProfile(nameOrErr)
+                    if ArenaSticky.editor and ArenaSticky.editor.status then
+                        ArenaSticky.editor.status:SetText("Created profile: " .. tostring(nameOrErr))
+                    end
+                    if ArenaSticky.editor and ArenaSticky.editor.RefreshProfileDropdown then
+                        ArenaSticky.editor:RefreshProfileDropdown()
+                    end
+                    if ArenaSticky.editor and ArenaSticky.editor.RefreshCopyFromDropdown then
+                        ArenaSticky.editor:RefreshCopyFromDropdown()
+                    end
+                else
+                    if ArenaSticky.editor and ArenaSticky.editor.status then
+                        ArenaSticky.editor.status:SetText(tostring(nameOrErr or "Could not create profile."))
+                    end
+                end
+            end,
+            EditBoxOnEnterPressed = function(self)
+                local p = self:GetParent()
+                if p and p.button1 then
+                    p.button1:Click()
+                end
+            end,
+            timeout = 0,
+            whileDead = 1,
+            hideOnEscape = 1,
+            preferredIndex = 3,
+        }
+    end
+
+    f.profileDropdown = profileDD
+    f.copyFromDropdown = copyFromDD
+    f.RefreshProfileDropdown = RefreshProfileDropdown
+    f.RefreshCopyFromDropdown = RefreshCopyFromDropdown
 
     loadBtn:SetScript("OnClick", function()
         LoadCompIntoEditor(f, f.compInput:GetText())
@@ -499,36 +753,91 @@ local function EnsureEditor()
         end
     end)
 
-    importBtn:SetScript("OnClick", function()
-        if StaticPopup_Show then
-            StaticPopup_Show("ARENASTICKY_IMPORT_TEXT")
+    -- Multiline scroll box: long AS2/ASPACK2 strings + line breaks
+    local importOverlay = CreateFrame("Frame", nil, f, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    importOverlay:SetFrameStrata("DIALOG")
+    importOverlay:SetFrameLevel((f:GetFrameLevel() or 0) + 100)
+    importOverlay:SetSize(660, 228)
+    importOverlay:SetPoint("CENTER", f, "CENTER", 0, 20)
+    importOverlay:EnableMouse(true)
+    importOverlay:Hide()
+    if importOverlay.SetBackdrop then
+        importOverlay:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 32,
+            edgeSize = 24,
+            insets = { left = 8, right = 8, top = 8, bottom = 8 }
+        })
+    end
+
+    local importOverlayTitle = importOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    importOverlayTitle:SetPoint("TOP", 0, -14)
+    importOverlayTitle:SetText("Import — AS2 / ASPACK2 (legacy AS1 / ASPACK1 OK)")
+
+    local importScroll = CreateFrame("ScrollFrame", nil, importOverlay, "UIPanelScrollFrameTemplate")
+    importScroll:SetPoint("TOPLEFT", 20, -44)
+    importScroll:SetSize(618, 118)
+
+    local importEdit = CreateFrame("EditBox", nil, importScroll)
+    importEdit:SetMultiLine(true)
+    importEdit:SetMaxLetters(9999999)
+    importEdit:SetFontObject("GameFontHighlightSmall")
+    importEdit:SetWidth(600)
+    importEdit:SetHeight(3000)
+    importEdit:SetAutoFocus(false)
+    importEdit:SetTextInsets(6, 6, 6, 6)
+    importScroll:SetScrollChild(importEdit)
+
+    local importOverlayOk = CreateFrame("Button", nil, importOverlay, "UIPanelButtonTemplate")
+    importOverlayOk:SetSize(120, 24)
+    importOverlayOk:SetText("Import")
+    importOverlayOk:SetPoint("BOTTOMRIGHT", -16, 14)
+
+    local importOverlayCancel = CreateFrame("Button", nil, importOverlay, "UIPanelButtonTemplate")
+    importOverlayCancel:SetSize(120, 24)
+    importOverlayCancel:SetText(CANCEL or "Cancel")
+    importOverlayCancel:SetPoint("RIGHT", importOverlayOk, "LEFT", -10, 0)
+
+    importOverlayOk:SetScript("OnClick", function()
+        local t = importEdit:GetText() or ""
+        importOverlay:Hide()
+        if ArenaSticky.ImportFromPaste then
+            local ok, err = ArenaSticky.ImportFromPaste(t)
+            if ok then
+                print("|cff33ff99ArenaSticky|r: Import finished.")
+                f.status:SetText("Import finished.")
+            else
+                print("|cffff4444ArenaSticky|r: " .. tostring(err))
+                f.status:SetText(tostring(err or "Import failed."))
+            end
         end
-        f.status:SetText("Import: paste AS1 or ASPACK1 string, then confirm.")
+    end)
+
+    importOverlayCancel:SetScript("OnClick", function()
+        importOverlay:Hide()
+    end)
+
+    importBtn:SetScript("OnClick", function()
+        importEdit:SetText("")
+        importOverlay:Show()
+        importEdit:SetFocus()
+        f.status:SetText("Paste in the box, then Import (long strings & line breaks OK).")
     end)
 
     closeBtn:SetScript("OnClick", function()
         f:Hide()
     end)
 
-    local function RefreshProfileDropdown()
-        if not f.profileDropdown or not ArenaSticky.GetSortedProfileNames then
-            return
-        end
-        local names = ArenaSticky.GetSortedProfileNames()
-        UIDropDownMenu_Initialize(f.profileDropdown, function(_, level)
-            for _, pname in ipairs(names) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = pname
-                info.func = function()
-                    ArenaSticky.SwitchProfile(pname)
-                end
-                UIDropDownMenu_AddButton(info, level)
-            end
-        end)
-        local cur = (ArenaStickyDB and ArenaStickyDB.activeProfile) or "Default"
-        UIDropDownMenu_SetText(f.profileDropdown, cur)
-    end
-    f.RefreshProfileDropdown = RefreshProfileDropdown
+    f:SetScript("OnHide", function()
+        importOverlay:Hide()
+    end)
+
+    f:SetScript("OnShow", function()
+        RefreshProfileDropdown()
+        RefreshCopyFromDropdown()
+    end)
 
     f.RunRefreshFromProfileChange = function()
         RefreshCompDropdown(f)
@@ -541,6 +850,7 @@ local function EnsureEditor()
     ArenaSticky.editor = f
     RefreshCompDropdown(f)
     RefreshProfileDropdown()
+    RefreshCopyFromDropdown()
     return f
 end
 
@@ -554,6 +864,9 @@ function ArenaSticky.EditorRefreshFromProfile()
     end
     if fr.RefreshProfileDropdown then
         fr:RefreshProfileDropdown()
+    end
+    if fr.RefreshCopyFromDropdown then
+        fr:RefreshCopyFromDropdown()
     end
 end
 

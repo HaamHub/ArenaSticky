@@ -98,10 +98,12 @@ function ArenaSticky.SpecIconInline(token, size)
 end
 
 --- Comp key as menu row: icon+token per segment (space-separated).
+--- Keys are class tokens only (e.g. DISC-MAGE = 2v2, DISC-MAGE-ROGUE = 3v3); bracket is not encoded in the key.
 function ArenaSticky.CompKeyMenuLabel(key)
     if not key or key == "" then return "" end
+    local body = key:match("^%d%-(.+)$") or key
     local segs = {}
-    for p in string.gmatch(key, "[^-]+") do
+    for p in string.gmatch(body, "[^-]+") do
         local tok = string.upper(p)
         table.insert(segs, ArenaSticky.SpecIconInline(tok, 16) .. " " .. tok)
     end
@@ -235,8 +237,9 @@ end
 
 local function ToLegacyCompKey(compKey)
     if not compKey or compKey == "" then return compKey end
+    local body = compKey:match("^%d%-(.+)$") or compKey
     local parts = {}
-    for p in compKey:gmatch("[^-]+") do
+    for p in body:gmatch("[^-]+") do
         table.insert(parts, ToLegacyClassToken(p))
     end
     return NormalizeCompKey(parts)
@@ -253,8 +256,9 @@ end
 
 local function FromLegacyCompKey(compKey)
     if not compKey or compKey == "" then return compKey end
+    local body = compKey:match("^%d%-(.+)$") or compKey
     local parts = {}
-    for p in compKey:gmatch("[^-]+") do
+    for p in body:gmatch("[^-]+") do
         table.insert(parts, FromLegacyClassToken(p))
     end
     return NormalizeCompKey(parts)
@@ -268,7 +272,14 @@ local function ResolveTestAlias(arg)
         for p in clean:gmatch("[^-]+") do
             table.insert(parts, p:upper())
         end
-        if #parts >= 2 then
+        -- e.g. "2-disc-mage" → DISC-MAGE (ignore leading bracket digit in tests)
+        if #parts >= 3 and parts[1]:match("^%d$") then
+            table.remove(parts, 1)
+            if #parts >= 2 then
+                local bareKey = NormalizeCompKey(parts)
+                return FromLegacyCompKey(bareKey), clean
+            end
+        elseif #parts >= 2 then
             local key = NormalizeCompKey(parts)
             return FromLegacyCompKey(key), clean
         end
@@ -279,221 +290,311 @@ local function ResolveTestAlias(arg)
 end
 
 local DEFAULT_STRATEGIES = {
-    -- 3v3: RMP (you) vs common TBC comps
+    -- Role lines: aim ~5–12 words each (sticky / glance).
     ["RESTO-WARLOCK-WARRIOR"] = {
         header = { kill = "Warlock", cc = "Resto Druid" },
         roles = {
-            DISC = "Max pillar. Dispel fear only. Trinket real cross, then reset/drink.",
-            ROGUE = "Open lock. Kidney only on druid CC. Missed go = full reset.",
-            MAGE = "Sheep druid on go. Peel warrior. CS fear/heals on setup.",
+            DISC = "Pillar. Dispel fear. Trinket cross; reset.",
+            ROGUE = "Open lock. Kidney druid CC. Bad go reset.",
+            MAGE = "Sheep druid go. Peel war. CS fear.",
         },
     },
     ["DISC-MAGE-ROGUE"] = {
-        header = { kill = "Mage or Disc", cc = "whoever is not kill target" },
+        header = { kill = "Mage", cc = "Disc" },
         roles = {
-            DISC = "No early trinket overlap. Fear off sheep. PI only real goes.",
-            ROGUE = "Sap disc if free. Stop their opener. Save vanish for re-go.",
-            MAGE = "Win poly race. Counter-go only on full disc CC. Peel after.",
+            DISC = "No trinket stack. Fear sheep. PI real goes.",
+            ROGUE = "Sap disc. Stop open. Vanish re-go.",
+            MAGE = "Poly race. Counter if enemy disc locked.",
+        },
+    },
+    ["DISC-MAGE"] = {
+        header = { kill = "Mage", cc = "Disc" },
+        roles = {
+            DISC = "PI goes. Fear/sheep. MD their go.",
+            MAGE = "Race poly. CS if disc locked.",
         },
     },
     ["DISC-HUNTER-ROGUE"] = {
         header = { kill = "Hunter", cc = "Disc" },
         roles = {
-            DISC = "Avoid sap-trap line. Trinket kill setups only. Dispel trap smart.",
-            ROGUE = "Control rogue first, then go hunter with disc CC.",
-            MAGE = "Peel first. Poly disc on go. Burst only if hunter is stuck.",
+            DISC = "No sap-trap. Trinket chains. Dispel trap.",
+            ROGUE = "Rogue first, then hunter.",
+            MAGE = "Peel. Poly disc go.",
         },
     },
     ["RESTO-ROGUE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Resto Druid" },
         roles = {
-            DISC = "Respect rogue swap. Dispel coil/fear only. If rogue resets, drink.",
-            ROGUE = "Open lock. Kidney on druid CC. Blind druid after trinket.",
-            MAGE = "Sheep druid. Peel rogue. CS lock on kill go.",
+            DISC = "Dispel coil/fear. Drink if rogue resets you.",
+            ROGUE = "Open lock. Kidney druid. Blind trinket.",
+            MAGE = "Sheep druid. Peel rogue. CS lock.",
         },
     },
     ["RSHAM-ROGUE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "RSham" },
         roles = {
-            DISC = "Pre-shield purge swap. Fear shaman on go. Conserve mana.",
-            ROGUE = "Open lock. Kick fear/heals. Blind shaman on trinket.",
-            MAGE = "Sheep shaman on go. Peel rogue. CS lock on setup.",
+            DISC = "Shield purge. Fear sham go. Save mana.",
+            ROGUE = "Open lock. Kick fear. Blind sham.",
+            MAGE = "Sheep sham. Peel rogue. CS lock.",
         },
     },
     ["RSHAM-SHADOW-WARLOCK"] = {
         header = { kill = "Warlock", cc = "RSham" },
         roles = {
-            DISC = "Respect rot. Drink fast. Dispel VT/fear only when needed.",
-            ROGUE = "Go lock. Kick fear. Kidney on shaman CC. Reset often.",
-            MAGE = "Sheep shaman on go. CS lock. Peel shadow between goes.",
+            DISC = "Drink. Dispel VT/fear smart.",
+            ROGUE = "Lock. Kick fear. Kidney sham. Reset.",
+            MAGE = "Sheep sham. CS lock. Peel shadow.",
         },
     },
     ["RSHAM-WARLOCK-WARRIOR"] = {
         header = { kill = "Warlock", cc = "RSham" },
         roles = {
-            DISC = "Live first bridge. Trinket lethal overlap only. Fear shaman on go.",
-            ROGUE = "Open lock. Force CDs early. Reset if warrior gets free uptime.",
-            MAGE = "Sheep shaman on go. Peel warrior all game. CS fear/heals.",
+            DISC = "Bridge. Trinket stacks. Fear sham go.",
+            ROGUE = "Open lock. Force CDs. Reset if war free.",
+            MAGE = "Sheep sham. Peel war. CS fear.",
         },
     },
     ["ELE-RESTO-WARLOCK"] = {
-        header = { kill = "Warlock", cc = "Resto Druid/Shaman" },
+        header = { kill = "Warlock", cc = "Resto" },
         roles = {
-            DISC = "Never play open. Fear healer on go. Dispel key CC only.",
-            ROGUE = "Open lock. Short goes. Swap ele only if overextended.",
-            MAGE = "Peel and line first. CS lock/healer on go. Keep ele slowed.",
+            DISC = "Pillar. Fear healer go. Dispel key CC.",
+            ROGUE = "Lock. Short goes. Swap ele if out.",
+            MAGE = "Peel. CS lock/healer. Slow ele.",
         },
     },
     ["DISC-RESTO-WARRIOR"] = {
         header = { kill = "Warrior", cc = "Disc" },
         roles = {
-            DISC = "Live warrior go. Fear disc on setup. Save trinket for real swap.",
-            ROGUE = "Go warrior. Kidney on disc CC. Reset if warrior sticks.",
-            MAGE = "Peel warrior. Poly disc on go. Slow all game.",
+            DISC = "Survive train. Fear disc setup. Trinket swap.",
+            ROGUE = "War. Kidney disc CC. Reset.",
+            MAGE = "Peel war. Poly disc. Slow.",
         },
     },
     ["DISC-RESTO-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Disc" },
         roles = {
-            DISC = "Line dots. Fear disc on go. Dispel fear/dots only when needed.",
-            ROGUE = "Go lock. Kick fear. Kidney on disc CC. Reset after go.",
-            MAGE = "Poly disc on go. CS lock. Line dots between goes.",
+            DISC = "Line dots. Fear disc go. Dispel smart.",
+            ROGUE = "Lock. Kick fear. Kidney disc. Reset.",
+            MAGE = "Poly disc. CS lock. Line.",
         },
     },
     ["DISC-ROGUE-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Disc" },
         roles = {
-            DISC = "Respect rogue swap. Fear disc on go. Dispel fear smart.",
-            ROGUE = "Open lock. Stop rogue first if needed. Blind disc on trinket.",
-            MAGE = "Peel rogue. Poly disc on go. CS lock on setup.",
+            DISC = "Fear disc go. Dispel fear.",
+            ROGUE = "Lock. Rogue first if needed. Blind disc.",
+            MAGE = "Peel rogue. Poly disc. CS lock.",
+        },
+    },
+    ["RET-RSHAM"] = {
+        header = { kill = "RSham", cc = "Ret" },
+        roles = {
+            DISC = "Fear sham. Purge/winds. Trinket wings.",
+            ROGUE = "Kidney sham. Blind/CC ret. Reset.",
+            MAGE = "Sheep ret peel. CS hex. Nova ret.",
         },
     },
     ["RET-RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Respect burst. Fear sham on go. Trinket only real overlap.",
-            ROGUE = "Go warrior. Kidney on sham CC. Reset after cooldowns.",
-            MAGE = "Peel warrior/ret. Sheep sham on go. Keep warrior slowed.",
+            DISC = "Fear sham go. Trinket overlap.",
+            ROGUE = "War. Kidney sham. Reset.",
+            MAGE = "Peel war/ret. Sheep sham. Slow war.",
         },
     },
     ["MAGE-RESTO-WARRIOR"] = {
         header = { kill = "Mage", cc = "Resto Druid" },
         roles = {
-            DISC = "Do not overtrade on mage go. Fear druid on setup.",
-            ROGUE = "Open mage often. Kidney on druid CC. Peel warrior after.",
-            MAGE = "Win poly race. Sheep druid on go. Slow warrior all game.",
+            DISC = "Don't overtrade. Fear druid setup.",
+            ROGUE = "Open mage. Kidney druid. Peel war.",
+            MAGE = "Poly race. Sheep druid. Slow war.",
         },
     },
     ["ENH-HPAL-WARRIOR"] = {
         header = { kill = "Warrior", cc = "HPal" },
         roles = {
-            DISC = "Respect double melee burst. Fear pal on go. Save trinket.",
-            ROGUE = "Go warrior. Kidney on pal CC. Reset after wall/freedom.",
-            MAGE = "Peel both melee. Poly pal on go. Root warrior often.",
+            DISC = "Fear pal go. Trinket smart.",
+            ROGUE = "War. Kidney pal. Reset CDs.",
+            MAGE = "Peel melee. Poly pal. Root war.",
         },
     },
     ["ENH-RESTO-WARRIOR"] = {
         header = { kill = "Warrior", cc = "Resto Druid" },
         roles = {
-            DISC = "Play pillar. Fear druid on go. Trinket enh+warrior overlap.",
-            ROGUE = "Go warrior. Kidney on druid CC. Reset if train is free.",
-            MAGE = "Peel enh/warrior. Sheep druid on go. Slow both melee.",
+            DISC = "Pillar. Fear druid go. Trinket overlap.",
+            ROGUE = "War. Kidney druid. Reset.",
+            MAGE = "Peel enh/war. Sheep druid. Slow.",
         },
     },
     ["ENH-RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Respect purge burst. Fear sham on go. Save trinket for kill.",
-            ROGUE = "Go warrior. Kidney on sham CC. Reset after burst.",
-            MAGE = "Peel both melee. Sheep sham on go. Keep warrior slowed.",
+            DISC = "Fear sham go. Trinket kill.",
+            ROGUE = "War. Kidney sham. Reset.",
+            MAGE = "Peel melee. Sheep sham. Slow war.",
         },
     },
-    -- Double healer + warrior (e.g. resto druid / rsham / arms)
     ["RESTO-RSHAM-WARRIOR"] = {
-        header = { kill = "Warrior", cc = "Swap healers" },
+        header = { kill = "Warrior", cc = "Druid or RSham" },
         roles = {
-            DISC = "Long game. Fear whichever healer is exposed on go. Dispel roots/sheep.",
-            ROGUE = "Train warrior. Swap to sham if druid is CC’d. Kidney on healer CC.",
-            MAGE = "Peel warrior. Sheep druid or sham on kill setups. CS cyclone/heals.",
+            DISC = "Fear open healer go. Dispel CC.",
+            ROGUE = "Train war. Kidney healer CC.",
+            MAGE = "Peel war. Sheep healer go. CS.",
         },
     },
 
-    -- 2v2: Disc/Mage, Rogue/Mage, Disc/Rogue vs common TBC comps
     ["DISC-ROGUE"] = {
-        header = { kill = "Disc or Rogue" , cc = "off-target" },
+        header = { kill = "Rogue", cc = "Disc" },
         roles = {
-            DISC = "Live opener. Fear off rogue control. Reset early if needed.",
-            ROGUE = "Disc if free, rogue if not. Force CDs fast. Save vanish.",
-            MAGE = "Peel rogue first. Burst only on disc control.",
+            DISC = "Fear disc goes. No CC overlap. Trinket chains.",
+            ROGUE = "Stick rogue. Kick/blind disc trinket.",
+            MAGE = "Poly disc. Slow rogue. CS fear.",
         },
     },
-    -- 2v2 Shadow + Rogue (detected as SHADOW / ROGUE tokens)
     ["ROGUE-SHADOW"] = {
-        header = { kill = "Rogue or Shadow", cc = "other DPS" },
+        header = { kill = "Shadow", cc = "Rogue" },
         roles = {
-            DISC = "Respect opener. Fear shadow on kill setups. Dispel VT/sheep smart.",
-            SHADOW = "Shadow mirror: silence/fear timing. PI if your rogue connects.",
-            ROGUE = "Peel rogue first; swap priest if rogue overextends. Blind after trinket.",
-            MAGE = "Slow rogue. Sheep shadow on full DR windows. CS fear/VT.",
+            DISC = "Fear shadow goes. Dispel VT/sheep.",
+            SHADOW = "Silence/fear. PI on connect.",
+            ROGUE = "Peel rogue. Blind trinket.",
+            MAGE = "Slow rogue. Sheep shadow. CS.",
         },
     },
     ["DISC-WARLOCK"] = {
         header = { kill = "Warlock", cc = "Disc" },
         roles = {
-            DISC = "Dispel key dots/fears only. Stay active; don’t rot.",
-            ROGUE = "Go lock. Kick fear. Force disc trinket, then blind.",
-            MAGE = "Sheep disc on go. Line dots. CS lock when exposed.",
+            DISC = "Dispel key dots/fear. Stay up.",
+            ROGUE = "Lock. Kick fear. Blind disc.",
+            MAGE = "Sheep disc go. Line. CS lock.",
         },
     },
     ["HPAL-WARRIOR"] = {
         header = { kill = "Warrior", cc = "HPal" },
         roles = {
-            DISC = "Do not panic trinket. Fear pal on go. Make warrior overextend.",
-            ROGUE = "Control warrior first. Kidney on pal CC. Reset often.",
-            MAGE = "Perma-slow warrior. Poly pal on go. Drink if fully kited.",
+            DISC = "Fear pal go. Bait war.",
+            ROGUE = "War first. Kidney pal. Reset.",
+            MAGE = "Slow war. Poly pal. Drink.",
         },
     },
     ["RESTO-WARRIOR"] = {
         header = { kill = "Warrior", cc = "Resto Druid" },
         roles = {
-            DISC = "Don’t get dragged. Fear druid on real go. Save trinket for bash.",
-            ROGUE = "Kidney warrior on druid CC. Reset often. Don’t chase druid.",
-            MAGE = "Perma-slow warrior. Sheep druid only when ready to go.",
+            DISC = "Don't get pulled. Fear druid go. Trinket bash.",
+            ROGUE = "Kidney war druid CC. Reset.",
+            MAGE = "Slow war. Sheep druid go.",
         },
     },
     ["RSHAM-WARRIOR"] = {
         header = { kill = "Warrior", cc = "RSham" },
         roles = {
-            DISC = "Mana matters. Fear shaman on go. Watch warrior swap.",
-            ROGUE = "Usually go warrior. Kidney on shaman CC. Reset if trained.",
-            MAGE = "Peel warrior forever. Sheep shaman on go. CS heals/reconnect.",
+            DISC = "Fear sham go. Mana game.",
+            ROGUE = "War. Kidney sham. Reset.",
+            MAGE = "Peel war. Sheep sham. CS.",
         },
     },
     ["DISC-HUNTER"] = {
         header = { kill = "Hunter", cc = "Disc" },
         roles = {
-            DISC = "Respect trap. Trinket kill chain only. Fear disc on go.",
-            ROGUE = "Stick hunter. Step-kick/blind disc. Reset if hunter kites free.",
-            MAGE = "Pin hunter. Control disc every go. Slow/nova matter.",
+            DISC = "Trap respect. Trinket chains. Fear disc.",
+            ROGUE = "Stick hunter. Kick/blind disc.",
+            MAGE = "Pin hunter. Poly disc. Nova.",
         },
     },
     ["MAGE-ROGUE"] = {
-        header = { kill = "Mage or Rogue", cc = "off-target" },
+        header = { kill = "Mage", cc = "Rogue" },
         roles = {
-            DISC = "Live opener. Trinket lethal only. Dispel + fear to break reset.",
-            ROGUE = "Opener decides game. Control rogue first unless mage is free.",
-            MAGE = "Live first. Win CC war. CS real go. Block early if needed.",
+            DISC = "Fear rogue goes. MD CC. Trinket kills.",
+            ROGUE = "Mage goes. Kick poly. Vanish re-go.",
+            MAGE = "Sheep rogue DR. Nova. CS.",
         },
     },
     ["RESTO-ROGUE"] = {
         header = { kill = "Rogue", cc = "Resto Druid" },
         roles = {
-            DISC = "Live opener. Fear druid after. Save CDs for rogue all-in.",
-            ROGUE = "Go rogue. Control druid after trinket. Don’t chase druid.",
-            MAGE = "Peel rogue always. Only hit druid on real go windows.",
+            DISC = "Fear druid after open. Save CDs.",
+            ROGUE = "Their rogue. CC druid trinket.",
+            MAGE = "Peel rogue. Druid on goes only.",
+        },
+    },
+    -- From SavedVariables / ArenaReplay comps not covered above (same short-line style).
+    ["DISC-WARRIOR"] = {
+        header = { kill = "Warrior", cc = "Disc" },
+        roles = {
+            DISC = "Fear disc setup. Dispel MC. Trinket swap.",
+            ROGUE = "Train war. Kidney disc CC.",
+            MAGE = "Poly disc peel. Slow war. CS.",
+        },
+    },
+    ["ENH-ENH"] = {
+        header = { kill = "Enh", cc = "Enh" },
+        roles = {
+            DISC = "Spread burst. Hex one go. Trinket wolves.",
+            ROGUE = "Train one. Kick heals. Reset.",
+            MAGE = "Slow both. Nova on peels.",
+        },
+    },
+    ["HUNTER-ROGUE"] = {
+        header = { kill = "Hunter", cc = "Rogue" },
+        roles = {
+            DISC = "Respect trap. Fear hunter goes.",
+            ROGUE = "Hunter first. Kidney rogue.",
+            MAGE = "Pin hunter. Poly rogue. Nova scatter.",
+        },
+    },
+    ["MAGE-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Mage" },
+        roles = {
+            DISC = "Fear lock goes. Dispel dots. Trinket coil.",
+            ROGUE = "Lock first. Kick fear. Kidney swap.",
+            MAGE = "Sheep mage peel. CS fear. Line lock.",
+        },
+    },
+    ["ROGUE-MAGE"] = {
+        header = { kill = "Mage", cc = "Rogue" },
+        roles = {
+            DISC = "Fear rogue goes. MD CC. Trinket kills.",
+            ROGUE = "Mage goes. Kick poly. Vanish re-go.",
+            MAGE = "Sheep rogue DR. Nova. CS.",
+        },
+    },
+    ["ROGUE-WARLOCK"] = {
+        header = { kill = "Warlock", cc = "Rogue" },
+        roles = {
+            DISC = "Fear lock goes. Dispel fear smart.",
+            ROGUE = "Train lock. Blind rogue on swap.",
+            MAGE = "Sheep lock. Peel rogue. CS fear.",
         },
     },
 }
+
+--- One-time style migration: legacy "2-KEY"/"3-KEY" → "KEY" (same strategies, bare key wins if both exist).
+local function MigrateBracketPrefixedKeysInStrategies(strategies)
+    if type(strategies) ~= "table" then return end
+    local remove = {}
+    for k, v in pairs(strategies) do
+        if type(k) == "string" then
+            local bare = k:match("^%d%-(.+)$")
+            if bare and bare ~= "" then
+                if strategies[bare] == nil then
+                    strategies[bare] = v
+                end
+                remove[#remove + 1] = k
+            end
+        end
+    end
+    for i = 1, #remove do
+        strategies[remove[i]] = nil
+    end
+end
+
+local function MigrateBracketPrefixedKeysAllProfiles()
+    if not ArenaStickyDB or type(ArenaStickyDB.profiles) ~= "table" then return end
+    for _, prof in pairs(ArenaStickyDB.profiles) do
+        if type(prof) == "table" and type(prof.strategies) == "table" then
+            MigrateBracketPrefixedKeysInStrategies(prof.strategies)
+        end
+    end
+end
 
 local function EnsureDB()
     ArenaStickyDB = ArenaStickyDB or {}
@@ -533,7 +634,14 @@ local function EnsureDB()
     end
 
     SyncActiveProfilePointers()
-    ArenaStickyDB.strategies = MergeMissingStrategies(ArenaStickyDB.strategies, DEFAULT_STRATEGIES)
+    MigrateBracketPrefixedKeysAllProfiles()
+    SyncActiveProfilePointers()
+    -- New/blank profiles set skipDefaultStrategyMerge so they stay empty (no baked-in default comps).
+    local ap = ArenaStickyDB.activeProfile or "Default"
+    local prof = ArenaStickyDB.profiles and ArenaStickyDB.profiles[ap]
+    if not prof or not prof.skipDefaultStrategyMerge then
+        ArenaStickyDB.strategies = MergeMissingStrategies(ArenaStickyDB.strategies, DEFAULT_STRATEGIES)
+    end
     SyncActiveProfilePointers()
 end
 
@@ -1067,14 +1175,16 @@ local function ParseEnemyCompFromArenaUnits()
     for _, t in ipairs(tokens) do
         table.insert(ArenaSticky.enemyClasses, t)
     end
+    -- Class tokens only; 2 tokens = 2v2 and 3 = 3v3 (editor / UI infer bracket from count).
     return NormalizeCompKey(ArenaSticky.enemyClasses)
 end
 
 --- Paladin defaults to HPAL before we see casts; strategy DB often keys melee comps as RET.
 local function CompKeyWithTokenSwap(compKey, fromToken, toToken)
     if not compKey then return nil end
+    local body = compKey:match("^%d%-(.+)$") or compKey
     local parts = {}
-    for p in compKey:gmatch("[^-]+") do
+    for p in body:gmatch("[^-]+") do
         if p == fromToken then
             table.insert(parts, toToken)
         else
@@ -1084,9 +1194,8 @@ local function CompKeyWithTokenSwap(compKey, fromToken, toToken)
     return NormalizeCompKey(parts)
 end
 
-local function FindStrategyForCompKey(compKey)
+local function FindStrategyDirect(compKey)
     if not compKey or compKey == "" then return nil end
-    EnsureDB()
     local strat = ArenaStickyDB.strategies[compKey]
     if strat then return strat end
     local legacyKey = ToLegacyCompKey(compKey)
@@ -1104,6 +1213,18 @@ local function FindStrategyForCompKey(compKey)
             strat = ArenaStickyDB.strategies[alt]
             if strat then return strat end
         end
+    end
+    return nil
+end
+
+local function FindStrategyForCompKey(compKey)
+    if not compKey or compKey == "" then return nil end
+    EnsureDB()
+    local strat = FindStrategyDirect(compKey)
+    if strat then return strat end
+    local bare = compKey:match("^%d%-(.+)$")
+    if bare and bare ~= "" then
+        return FindStrategyDirect(bare)
     end
     return nil
 end
@@ -1198,8 +1319,45 @@ function ArenaSticky.CreateProfile(rawName)
     ArenaStickyDB.profiles[name] = {
         version = 1,
         lastUpdated = time(),
-        strategies = MergeMissingStrategies({}, DEFAULT_STRATEGIES),
+        strategies = {},
+        skipDefaultStrategyMerge = true,
     }
+    -- Second return is canonical profile name (for UI); on failure second return is error string.
+    return true, name
+end
+
+--- Replace active profile's strategies with a deep copy of another profile's notes (comps + text).
+function ArenaSticky.CopyNotesFromProfileToActive(rawSourceName)
+    local srcName, err = ValidateProfileName(rawSourceName)
+    if not srcName then
+        return false, err
+    end
+    EnsureDB()
+    local active = ArenaStickyDB.activeProfile or "Default"
+    if srcName == active then
+        return false, "Pick a profile other than the active one."
+    end
+    local srcP = ArenaStickyDB.profiles and ArenaStickyDB.profiles[srcName]
+    if not srcP or type(srcP.strategies) ~= "table" then
+        return false, "Unknown source profile."
+    end
+    local destP = ArenaStickyDB.profiles and ArenaStickyDB.profiles[active]
+    if not destP then
+        return false, "Active profile data missing."
+    end
+    destP.strategies = DeepCopy(srcP.strategies)
+    destP.version = (destP.version or 1) + 1
+    destP.lastUpdated = time()
+    destP.skipDefaultStrategyMerge = true
+    SyncActiveProfilePointers()
+    ArenaStickyDB.version = destP.version
+    ArenaStickyDB.lastUpdated = destP.lastUpdated
+    if ArenaSticky.currentCompKey then
+        UpdateNotesForComp(ArenaSticky.currentCompKey, true)
+    end
+    if ArenaSticky.EditorRefreshFromProfile then
+        ArenaSticky.EditorRefreshFromProfile()
+    end
     return true
 end
 
@@ -1243,18 +1401,31 @@ function ArenaSticky.DeleteProfile(rawName)
     if count <= 1 then
         return false, "Cannot delete the only profile."
     end
-    ArenaStickyDB.profiles[name] = nil
-    if ArenaStickyDB.activeProfile == name then
-        local names = ArenaSticky.GetSortedProfileNames()
-        ArenaStickyDB.activeProfile = names[1] or "Default"
+    -- If we remove the active profile first, EnsureDB() (e.g. inside GetSortedProfileNames)
+    -- would see activeProfile still pointing at a missing key and recreate an empty profile
+    -- with that name — so "delete" would appear to do nothing. Switch active first.
+    local wasActive = (ArenaStickyDB.activeProfile == name)
+    if wasActive then
+        local others = {}
+        for n in pairs(ArenaStickyDB.profiles) do
+            if n ~= name then
+                table.insert(others, n)
+            end
+        end
+        table.sort(others)
+        ArenaStickyDB.activeProfile = others[1] or "Default"
         if not ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] then
             ArenaStickyDB.profiles[ArenaStickyDB.activeProfile] = {
                 version = 1,
                 lastUpdated = time(),
-                strategies = MergeMissingStrategies({}, DEFAULT_STRATEGIES),
+                strategies = {},
             }
         end
-        SyncActiveProfilePointers()
+    end
+    ArenaStickyDB.profiles[name] = nil
+    SyncActiveProfilePointers()
+    EnsureDB()
+    if wasActive then
         if ArenaSticky.currentCompKey then
             UpdateNotesForComp(ArenaSticky.currentCompKey, true)
         end
@@ -1315,6 +1486,7 @@ local function SerializeStrategiesSimple(strategiesTable)
     local function esc(s)
         s = s or ""
         s = s:gsub("`", "``")
+        s = s:gsub("|", "`p")
         s = s:gsub("~", "`t")
         s = s:gsub(";", "`s")
         return s
@@ -1337,6 +1509,7 @@ local function DeserializeStrategiesSimple(str)
     local function unesc(s)
         s = s or ""
         s = s:gsub("``", "`0")
+        s = s:gsub("`p", "|")
         s = s:gsub("`t", "~")
         s = s:gsub("`s", ";")
         s = s:gsub("`0", "`")
@@ -1363,32 +1536,256 @@ local function DeserializeStrategiesSimple(str)
     return out
 end
 
+--- Hex-wrap raw serialized blob (AS2). No pipes/newlines in payload — survives chat/email paste reliably.
+local function HexEncode(s)
+    s = s or ""
+    if s == "" then
+        return ""
+    end
+    local t = {}
+    for i = 1, #s do
+        t[#t + 1] = string.format("%02x", s:byte(i))
+    end
+    return table.concat(t)
+end
+
+local function HexDecode(hex)
+    hex = (hex or ""):gsub("%s+", "")
+    if hex == "" then
+        return ""
+    end
+    if #hex % 2 == 1 then
+        return nil
+    end
+    local t = {}
+    for i = 1, #hex, 2 do
+        local b = tonumber(hex:sub(i, i + 1), 16)
+        if not b then
+            return nil
+        end
+        t[#t + 1] = string.char(b)
+    end
+    return table.concat(t)
+end
+
+--- Trim, normalize newlines, strip UTF-8 BOM / zero-width space (common when pasting from web/discord).
+local function NormalizeImportedExportText(t)
+    t = t or ""
+    t = t:gsub("\r\n", "\n")
+    t = t:gsub("\r", "\n")
+    if #t >= 3 and t:byte(1) == 239 and t:byte(2) == 187 and t:byte(3) == 191 then
+        t = t:sub(4)
+    end
+    if #t >= 3 and t:byte(1) == 226 and t:byte(2) == 128 and t:byte(3) == 139 then
+        t = t:sub(4)
+    end
+    return t:gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function TrimImportField(s)
+    return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+--- WoW FontStrings/edit status treat | as escape; || renders one literal vertical bar in UI text.
+local function WowEscapePipeForUiString(s)
+    if not s then
+        return ""
+    end
+    return s:gsub("|", "||")
+end
+
+--- Discord / Word / web often paste U+FF5C (fullwidth |), U+2028/U+2029 line breaks inside the line, etc.
+--- WoW multiline EditBoxes often paste field separators as doubled "||". AS2/ASPACK2 hex has no |, so collapsing runs is safe.
+local function CollapseAsciiPipeRunsForHexPayload(s)
+    return (s or ""):gsub("|+", "|")
+end
+
+local function NormalizeImportPipesAndSeparators(s)
+    if not s then
+        return ""
+    end
+    s = s:gsub("\239\188\156", "|")
+    --- U+2502 (box drawings light vertical), U+00A6 broken bar — some apps use these instead of ASCII |
+    s = s:gsub("\226\148\130", "|")
+    s = s:gsub("\194\166", "|")
+    s = s:gsub("\226\128\168", "")
+    s = s:gsub("\226\128\169", "")
+    return s
+end
+
+local function FindAsciiPipe(payload, startPos)
+    startPos = startPos or 1
+    for i = startPos, #payload do
+        if payload:byte(i) == 124 then
+            return i
+        end
+    end
+    return nil
+end
+
+local function FindLastAsciiPipe(payload, startPos)
+    startPos = startPos or 1
+    for i = #payload, startPos, -1 do
+        if payload:byte(i) == 124 then
+            return i
+        end
+    end
+    return nil
+end
+
+local function CountAsciiPipes(payload)
+    local n = 0
+    for i = 1, #payload do
+        if payload:byte(i) == 124 then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+--- AS2 export is name|ver|ts|hex (hex is [0-9a-f]*). Split from the right on the last three ASCII pipes so odd paste/join around the timestamp still parses.
+local function SplitAs2ByLastThreePipes(payload)
+    payload = TrimImportField(payload)
+    payload = payload:gsub("^|+", "")
+    payload = NormalizeImportPipesAndSeparators(payload)
+    payload = payload:gsub("\226\128\139", "")
+    if payload == "" then
+        return nil
+    end
+    local p3 = FindLastAsciiPipe(payload)
+    if not p3 then
+        return nil
+    end
+    local hexChunk = TrimImportField(payload:sub(p3 + 1))
+    hexChunk = hexChunk:gsub("%s+", "")
+    if hexChunk ~= "" and not hexChunk:match("^[0-9a-fA-F]+$") then
+        return nil
+    end
+    local beforeHex = payload:sub(1, p3 - 1)
+    if beforeHex == "" then
+        return nil
+    end
+    local p2 = FindLastAsciiPipe(beforeHex)
+    if not p2 then
+        return nil
+    end
+    local tsStr = TrimImportField(beforeHex:sub(p2 + 1)):gsub("\226\128\139", "")
+    local beforeTs = beforeHex:sub(1, p2 - 1)
+    if beforeTs == "" then
+        return nil
+    end
+    local p1 = FindLastAsciiPipe(beforeTs)
+    if not p1 then
+        return nil
+    end
+    local verStr = TrimImportField(beforeTs:sub(p1 + 1)):gsub("\226\128\139", "")
+    local name = TrimImportField(beforeTs:sub(1, p1 - 1)):gsub("\226\128\139", "")
+    if name == "" or verStr == "" or tsStr == "" then
+        return nil
+    end
+    local ver = tonumber(verStr:match("^(%d+)")) or tonumber(verStr)
+    local ts = tonumber(tsStr:match("^(%d+)")) or tonumber(tsStr)
+    if ver == nil or ts == nil then
+        return nil
+    end
+    return name, ver, ts, hexChunk
+end
+
+--- AS1 / pack line: name|ver|tail where tail is timestamp|blob or timestamp blob (| in blob must not be used as 3rd delimiter).
+local function SplitFourPipeFields(payload)
+    payload = TrimImportField(payload)
+    payload = payload:gsub("^|+", "")
+    payload = NormalizeImportPipesAndSeparators(payload)
+    if payload == "" then
+        return nil
+    end
+    local i1 = FindAsciiPipe(payload, 1)
+    if not i1 then
+        return nil
+    end
+    local i2 = FindAsciiPipe(payload, i1 + 1)
+    if not i2 then
+        return nil
+    end
+
+    local a = TrimImportField(payload:sub(1, i1 - 1))
+    local b = TrimImportField(payload:sub(i1 + 1, i2 - 1))
+    local tail = payload:sub(i2 + 1)
+
+    if a == "" or b == "" or tail == "" then
+        return nil
+    end
+
+    local ver = tonumber(b:match("^(%d+)")) or tonumber(b)
+    if ver == nil then
+        return nil
+    end
+
+    tail = TrimImportField(tail)
+    tail = tail:gsub("^|+", "")
+
+    local ts
+    local blob
+    -- Allow spaces or invisible junk before the unix digit run (paste from web/discord)
+    local tsPart, afterTs = tail:match("^[^%d]*(%d+)|(.*)$")
+    if tsPart then
+        ts = tonumber(tsPart)
+        blob = afterTs or ""
+    else
+        local tsDigits, glued = tail:match("^[^%d]*(%d+)(.*)$")
+        if not tsDigits then
+            return nil
+        end
+        ts = tonumber(tsDigits)
+        blob = glued or ""
+    end
+    if not ts then
+        return nil
+    end
+    return a, ver, ts, blob
+end
+
+--- Payload after "AS1|": name|ver|ts|blob — blob may contain "|".
+local function ParseAS1Payload(rest)
+    return SplitFourPipeFields(rest)
+end
+
+--- One profile line inside ASPACK1 (no AS1 prefix): name|ver|ts|blob
+local function ParsePackProfileLine(line)
+    return SplitFourPipeFields(line)
+end
+
+--- First non-empty line, for format sniffing (ASPACK1 / AS1).
+local function FirstLineOfPaste(fullText)
+    fullText = NormalizeImportedExportText(fullText or "")
+    for line in string.gmatch(fullText, "[^\n]+") do
+        local s = TrimImportField(line)
+        if s ~= "" then
+            return s
+        end
+    end
+    return TrimImportField(fullText)
+end
+
 function ArenaSticky.BuildExportStringActiveProfile()
     EnsureDB()
     local name = ArenaStickyDB.activeProfile or "Default"
     local blob = SerializeStrategiesSimple(ArenaStickyDB.strategies)
-    return string.format("AS1|%s|%d|%d|%s", name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), blob)
+    return string.format("AS2|%s|%d|%d|%s", name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), HexEncode(blob))
 end
 
 function ArenaSticky.BuildExportStringAllProfiles()
     EnsureDB()
-    local lines = { "ASPACK1" }
+    local lines = { "ASPACK2" }
     for _, pname in ipairs(ArenaSticky.GetSortedProfileNames()) do
         local p = ArenaStickyDB.profiles[pname]
         local blob = SerializeStrategiesSimple(p and p.strategies or {})
-        table.insert(lines, string.format("%s|%d|%d|%s", pname, p.version or 1, p.lastUpdated or time(), blob))
+        table.insert(lines, string.format("%s|%d|%d|%s", pname, p.version or 1, p.lastUpdated or time(), HexEncode(blob)))
     end
     return table.concat(lines, "\n")
 end
 
-function ArenaSticky.ImportSingleLineIntoActive(line)
-    local name, ver, ts, blob = line:match("^AS1|([^|]+)|(%d+)|(%d+)|(.*)$")
-    ver = tonumber(ver)
-    ts = tonumber(ts)
-    if not ver or not ts or not blob then
-        return false, "Could not parse AS1 line (wrong format or truncated)."
-    end
-    local strategies = DeserializeStrategiesSimple(blob)
+local function ApplyImportedStrategiesToActive(strategies, ver, ts)
     EnsureDB()
     local activeName = ArenaStickyDB.activeProfile or "Default"
     local prof = ArenaStickyDB.profiles[activeName]
@@ -1409,29 +1806,117 @@ function ArenaSticky.ImportSingleLineIntoActive(line)
     return true
 end
 
+--- One-line active-profile import. Prefer AS2 (hex blob); still accepts legacy AS1 (raw blob).
+function ArenaSticky.ImportSingleLineIntoActive(line)
+    line = NormalizeImportedExportText(line or "")
+    line = NormalizeImportPipesAndSeparators(line)
+    line = line:gsub("[\r\n]+", "")
+    line = line:gsub("\226\128\139", "")
+    local low = line:lower()
+
+    local as2pos = low:find("as2|", 1, true)
+    if as2pos then
+        local rest = line:sub(as2pos + 4)
+        rest = CollapseAsciiPipeRunsForHexPayload(rest)
+        local _, ver, ts, hexblob = SplitAs2ByLastThreePipes(rest)
+        if ver == nil or ts == nil then
+            _, ver, ts, hexblob = SplitFourPipeFields(rest)
+        end
+        if ver == nil or ts == nil then
+            local n = #rest
+            local pipes = CountAsciiPipes(rest)
+            local prev = rest:sub(1, math.min(120, n)) .. ((n > 120) and " …" or "")
+            prev = prev:gsub("|", "/")
+            return false, string.format(
+                "Could not parse AS2 line (expected name, version, unix time, hex after AS2). Payload length=%d. ASCII bar count=%d (need 3). Snippet: %s",
+                n,
+                pipes,
+                prev
+            )
+        end
+        local raw = HexDecode(hexblob)
+        if raw == nil then
+            return false, "AS2 import: hex block is invalid (corrupted or incomplete paste)."
+        end
+        local strategies = DeserializeStrategiesSimple(raw)
+        local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts)
+        if not ok then
+            return false, err
+        end
+        return true
+    end
+
+    local as1pos = low:find("as1|", 1, true)
+    if not as1pos then
+        return false, "Not a valid one-line import (expected a line starting with AS2 or legacy AS1 followed by delimited fields)."
+    end
+    local rest = line:sub(as1pos + 4)
+    local _exportProfile, ver, ts, blob = ParseAS1Payload(rest)
+    if ver == nil or ts == nil then
+        local n = #rest
+        local prev = rest:sub(1, math.min(220, n))
+        if n > 220 then
+            prev = prev .. " …"
+        end
+        return false, string.format(
+            "Could not parse AS1 line (legacy format). length=%d. Start: %s",
+            n,
+            WowEscapePipeForUiString(prev)
+        )
+    end
+    local strategies = DeserializeStrategiesSimple(blob)
+    local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts)
+    if not ok then
+        return false, err
+    end
+    return true
+end
+
 function ArenaSticky.ImportPackText(fullText)
-    fullText = (fullText or ""):gsub("\r\n", "\n")
+    fullText = NormalizeImportedExportText(fullText or "")
     local lines = {}
     for line in string.gmatch(fullText, "[^\n]+") do
         table.insert(lines, line)
     end
-    if not lines[1] or lines[1]:gsub("%s+", "") ~= "ASPACK1" then
-        return false, "Expected ASPACK1 header on line 1."
+    local headerIdx, headerLine
+    for i, line in ipairs(lines) do
+        local s = TrimImportField(line)
+        if s ~= "" then
+            headerIdx = i
+            headerLine = s
+            break
+        end
     end
+    local h = headerLine and headerLine:upper() or ""
+    if h ~= "ASPACK1" and h ~= "ASPACK2" then
+        return false, "Expected ASPACK1 or ASPACK2 on the first non-empty line."
+    end
+    local packUsesHex = (h == "ASPACK2")
     local newProfiles = {}
-    for i = 2, #lines do
+    for i = headerIdx + 1, #lines do
         local line = lines[i]:gsub("^%s+", ""):gsub("%s+$", "")
         if line ~= "" then
-            local pname, ver, ts, blob = line:match("^([^|]+)|(%d+)|(%d+)|(.*)$")
-            ver = tonumber(ver)
-            ts = tonumber(ts)
-            if not pname or not ver or not ts or blob == nil then
+            if packUsesHex then
+                line = CollapseAsciiPipeRunsForHexPayload(line)
+            end
+            local pname, ver, ts, blobField = ParsePackProfileLine(line)
+            if not pname then
                 return false, "Bad pack line " .. tostring(i) .. " (truncated or wrong format)."
+            end
+            local blobStr
+            if packUsesHex then
+                local decoded = HexDecode(blobField)
+                if decoded == nil then
+                    return false, "Bad hex in pack line " .. tostring(i) .. "."
+                end
+                blobStr = decoded
+            else
+                blobStr = blobField
             end
             newProfiles[pname] = {
                 version = ver,
                 lastUpdated = ts,
-                strategies = DeserializeStrategiesSimple(blob),
+                strategies = DeserializeStrategiesSimple(blobStr),
             }
         end
     end
@@ -1465,25 +1950,30 @@ function ArenaSticky.ImportPackText(fullText)
 end
 
 function ArenaSticky.ImportFromPaste(fullText)
-    fullText = (fullText or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    fullText = NormalizeImportedExportText(fullText or "")
     if fullText == "" then
         return false, "Paste was empty."
     end
-    local first = fullText:match("^[^\n\r]+") or ""
-    first = first:gsub("^%s+", ""):gsub("%s+$", "")
-    if first == "ASPACK1" then
+    local first = FirstLineOfPaste(fullText)
+    if first == "" then
+        return false, "Paste was empty."
+    end
+    if first:upper() == "ASPACK1" or first:upper() == "ASPACK2" then
         return ArenaSticky.ImportPackText(fullText)
     end
-    if first:match("^AS1|") then
-        return ArenaSticky.ImportSingleLineIntoActive(first)
+    -- AS1/AS2 are one logical line — merge newlines so wrapped pastes work
+    if first:lower():match("^as1|") or first:lower():match("^as2|") then
+        local merged = fullText:gsub("[\r\n]+", "")
+        return ArenaSticky.ImportSingleLineIntoActive(merged)
     end
-    return false, "Not a valid ArenaSticky export (need AS1 or ASPACK1)."
+    return false, "Not a valid ArenaSticky export (need AS2/AS1 line or ASPACK1/2 block)."
 end
 
 StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
-    text = "Copy this string (Ctrl+C) to share or back up. One line = active profile only; multi-line = full pack.",
+    text = "Copy this string (Ctrl+C). One line = AS2 active profile; multi-line = ASPACK2 (all profiles).",
     button1 = OKAY,
     hasEditBox = 1,
+    maxLetters = 9999999,
     wide = true,
     whileDead = true,
     timeout = 0,
@@ -1491,7 +1981,7 @@ StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
     OnShow = function(self)
         local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
         if eb then
-            eb:SetMaxLetters(999999)
+            eb:SetMaxLetters(9999999)
             eb:SetText(ArenaSticky.lastExportString or "")
             eb:SetFocus()
             eb:HighlightText()
@@ -1500,10 +1990,11 @@ StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
 }
 
 StaticPopupDialogs["ARENASTICKY_IMPORT_TEXT"] = {
-    text = "Paste an AS1 line (one profile) or ASPACK1 block (replaces ALL profiles). Then click Import.",
+    text = "Paste AS2 (or legacy AS1) one-line export, or ASPACK1/2 multi-line pack. Then click Import.",
     button1 = "Import",
     button2 = CANCEL,
     hasEditBox = 1,
+    maxLetters = 9999999,
     wide = true,
     whileDead = true,
     timeout = 0,
@@ -1511,7 +2002,7 @@ StaticPopupDialogs["ARENASTICKY_IMPORT_TEXT"] = {
     OnShow = function(self)
         local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
         if eb then
-            eb:SetMaxLetters(999999)
+            eb:SetMaxLetters(9999999)
             eb:SetText("")
         end
     end,
@@ -1795,20 +2286,8 @@ local function PrintHelp()
     print("  /as test        (random comp)   |   /as test rmp   (named alias)")
     print("  /as debug")
     print("  /as edit | show | hide | resetwindow | sync | request")
-    print("  /as profile …   (list | use <name> | new <name> | copy <a> <b> | delete <name>)")
     print("  /as export      (active profile)   |   /as export all   (all profiles, share/backup)")
-    print("  /as import      (paste AS1 or ASPACK1 from web/discord)")
-end
-
-local function PrintProfileList()
-    EnsureDB()
-    local cur = ArenaStickyDB.activeProfile or "?"
-    print("|cff33ff99ArenaSticky|r profiles (|cff00ccffactive|r = " .. cur .. "):")
-    for _, n in ipairs(ArenaSticky.GetSortedProfileNames()) do
-        local mark = (n == cur) and "  |cff33ff99← active|r" or ""
-        print("  " .. n .. mark)
-    end
-    print("|cff888888/as profile use <name>  ·  new  ·  copy <src> <dst>  ·  delete|r")
+    print("  /as import      (paste AS2 / ASPACK2 — legacy AS1 / ASPACK1 still work)")
 end
 
 local function ResetWindow()
@@ -1947,70 +2426,6 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     if a == "import" then
         EnsureInitialized()
         StaticPopup_Show("ARENASTICKY_IMPORT_TEXT")
-        return
-    end
-
-    if a == "profile" or a == "profiles" then
-        local restOrig = msg:match("^%s*[Pp][Rr][Oo][Ff][Ii][Ll][Ee]%s+(.*)$")
-            or msg:match("^%s*[Pp][Rr][Oo][Ff][Ii][Ll][Ee][Ss]%s+(.*)$")
-            or ""
-        restOrig = restOrig:gsub("^%s+", ""):gsub("%s+$", "")
-        if restOrig == "" then
-            PrintProfileList()
-            return
-        end
-        local sub = (restOrig:match("^(%S+)") or ""):lower()
-        local tail = restOrig:match("^%S+%s+(.*)$") or ""
-        tail = tail:gsub("^%s+", ""):gsub("%s+$", "")
-        if sub == "list" then
-            PrintProfileList()
-            return
-        elseif sub == "use" then
-            if tail == "" then
-                print("|cffff4444ArenaSticky|r: Usage: /as profile use <name>")
-                return
-            end
-            ArenaSticky.SwitchProfile(tail)
-            return
-        elseif sub == "new" then
-            if tail == "" then
-                print("|cffff4444ArenaSticky|r: Usage: /as profile new <name>")
-                return
-            end
-            local ok, err = ArenaSticky.CreateProfile(tail)
-            if ok then
-                print("|cff33ff99ArenaSticky|r: Created profile |cff00ccff" .. tail .. "|r. Switch with |cff888888/as profile use " .. tail .. "|r")
-            else
-                print("|cffff4444ArenaSticky|r: " .. tostring(err))
-            end
-            return
-        elseif sub == "delete" then
-            if tail == "" then
-                print("|cffff4444ArenaSticky|r: Usage: /as profile delete <name>")
-                return
-            end
-            local ok, err = ArenaSticky.DeleteProfile(tail)
-            if ok then
-                print("|cff33ff99ArenaSticky|r: Deleted profile |cff00ccff" .. tail .. "|r.")
-            else
-                print("|cffff4444ArenaSticky|r: " .. tostring(err))
-            end
-            return
-        elseif sub == "copy" then
-            local src, dst = tail:match("^(%S+)%s+(%S+)$")
-            if not src or not dst then
-                print("|cffff4444ArenaSticky|r: Usage: /as profile copy <src> <dst>  (single-word names)")
-                return
-            end
-            local ok, err = ArenaSticky.CopyProfile(src, dst)
-            if ok then
-                print("|cff33ff99ArenaSticky|r: Copied |cff00ccff" .. src .. "|r → |cff00ccff" .. dst .. "|r")
-            else
-                print("|cffff4444ArenaSticky|r: " .. tostring(err))
-            end
-            return
-        end
-        PrintProfileList()
         return
     end
 
