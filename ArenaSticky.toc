@@ -3,7 +3,7 @@
 ## Notes: Arena sticky notes, teammate sync, named profiles, import/export
 ## IconTexture: Interface\AddOns\ArenaSticky\icons\as_icon-256
 ## Author: You
-## Version: 0.3.1
+## Version: 0.3.2
 ## SavedVariables: ArenaStickyDB
 ## OptionalDeps:
 ArenaSticky.lua
