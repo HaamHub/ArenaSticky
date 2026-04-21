@@ -5,7 +5,7 @@ local CLASS_ORDER = {
     "RET", "HPAL",
     "RSHAM", "ELE", "ENH",
     "DISC", "SHADOW",
-    "RESTO", "BOOMY", "FERAL",
+    "RDRUID", "BOOMY", "FERAL",
 }
 
 local COMP_SLOT_OPTIONS = {
@@ -13,7 +13,7 @@ local COMP_SLOT_OPTIONS = {
     "RET", "HPAL",
     "RSHAM", "ELE", "ENH",
     "DISC", "SHADOW",
-    "RESTO", "BOOMY", "FERAL",
+    "RDRUID", "BOOMY", "FERAL",
 }
 
 local BRACKET_ICONS = {
@@ -35,18 +35,25 @@ local function BracketDropdownLabel(bracket)
 end
 
 local function GetPlayerDefaultNoteToken()
-    local _, class = UnitClass("player")
-    if class == "PRIEST" then
-        return "DISC"
+    if ArenaSticky.GetPlayerRoleToken then
+        local role = ArenaSticky.GetPlayerRoleToken()
+        if role and role ~= "" then
+            return role
+        end
     end
-    return nil
+    local _, class = UnitClass("player")
+    if class == "PRIEST" then return "DISC" end
+    if class == "DRUID" then return "RDRUID" end
+    if class == "SHAMAN" then return "RSHAM" end
+    if class == "PALADIN" then return "HPAL" end
+    return class
 end
 
 local function GetPartyDefaultNoteToken(unit)
     if not unit or not UnitExists(unit) then return nil end
     local _, class = UnitClass(unit)
     if class == "PRIEST" then return "DISC" end
-    if class == "DRUID" then return "RESTO" end
+    if class == "DRUID" then return "RDRUID" end
     if class == "SHAMAN" then return "RSHAM" end
     if class == "PALADIN" then return "HPAL" end
     return class
@@ -61,6 +68,24 @@ local function NormalizeCompFromParts(parts)
     end
     table.sort(classes)
     return table.concat(classes, "-")
+end
+
+local function BuildTeamCompKeyFromRows(f)
+    if not f or not f.noteRows then return nil end
+    local count = (f.selectedBracket == "2v2") and 2 or 3
+    local parts = {}
+    for i = 1, count do
+        local row = f.noteRows[i]
+        local tok = row and row.classValue
+        if tok and tok ~= "" and tok ~= "NONE" then
+            table.insert(parts, string.upper(tok))
+        end
+    end
+    if #parts < count then
+        return nil
+    end
+    table.sort(parts)
+    return table.concat(parts, "-")
 end
 
 local function GetSortedCompKeys()
@@ -106,6 +131,9 @@ local function LoadCompIntoEditor(f, key)
     if not data then
         f.killInput:SetText("")
         f.ccInput:SetText("")
+        if f.cc2Input then
+            f.cc2Input:SetText("")
+        end
         if f.noteRows then
             for i = 1, 3 do
                 f.noteRows[i].input:SetText("")
@@ -115,12 +143,15 @@ local function LoadCompIntoEditor(f, key)
         return
     end
 
-    f.killInput:SetText((data.header and data.header.kill) or "")
-    f.ccInput:SetText((data.header and data.header.cc) or "")
+    local teamKey = BuildTeamCompKeyFromRows(f)
+    local v = data.teamVariants and teamKey and data.teamVariants[teamKey]
+    local source = v or data
+    f.killInput:SetText((source.header and source.header.kill) or "")
+    f.ccInput:SetText((source.header and source.header.cc) or "")
     if f.UpdateNoteRowsFromComp then
         f:UpdateNoteRowsFromComp()
     end
-    f.status:SetText("Loaded " .. key)
+    f.status:SetText("Loaded " .. key .. (teamKey and (" for " .. teamKey) or ""))
 end
 
 local function RefreshCompDropdown(f)
@@ -192,6 +223,22 @@ local function EnsureEditor()
         fs:SetText(text)
         return fs
     end
+
+    local function MakeSectionHeader(text, x, y)
+        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        fs:SetPoint("TOPLEFT", x, y)
+        fs:SetText(text)
+        return fs
+    end
+
+    local function MakeHint(text, x, y)
+        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetPoint("TOPLEFT", x, y)
+        fs:SetText(text)
+        return fs
+    end
+
+    MakeSectionHeader("Enemy team", 12, -34)
 
     local function MakeInput(w, h, x, y, multiLine)
         local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
@@ -272,15 +319,40 @@ local function EnsureEditor()
                 self.noteRows[i].input:Hide()
             end
         end
+        if self.cc2Label and self.cc2Input then
+            if self.selectedBracket == "3v3" then
+                self.cc2Label:Show()
+                self.cc2Input:Show()
+            else
+                self.cc2Label:Hide()
+                self.cc2Input:Hide()
+            end
+        end
     end
 
     f.UpdateNoteRowsFromComp = function(self)
         local key = (self.compInput:GetText() or ""):upper()
         local data = ArenaStickyDB and ArenaStickyDB.strategies and ArenaStickyDB.strategies[key]
+        local teamKey = BuildTeamCompKeyFromRows(self)
+        local v = data and data.teamVariants and teamKey and data.teamVariants[teamKey]
+        local source = v or data
+        if source then
+            self.killInput:SetText((source.header and source.header.kill) or "")
+            self.ccInput:SetText((source.header and source.header.cc) or "")
+            if self.cc2Input then
+                self.cc2Input:SetText((source.header and (source.header.swap or source.header.cc2)) or "")
+            end
+        else
+            self.killInput:SetText("")
+            self.ccInput:SetText("")
+            if self.cc2Input then
+                self.cc2Input:SetText("")
+            end
+        end
         for i = 1, 3 do
             local row = self.noteRows[i]
             local classToken = row.classValue or "DISC"
-            row.input:SetText((data and data.roles and data.roles[classToken]) or "")
+            row.input:SetText((source and source.roles and source.roles[classToken]) or "")
         end
     end
 
@@ -303,7 +375,7 @@ local function EnsureEditor()
     -- Tighter layout under title (reduces empty band below "ArenaSticky Strategy Editor")
     local Y0 = 34
     local KILL_CC_FIELD_SHIFT_X = 8
-    MakeLabel("Comp Key (sorted tokens: 2 specs = 2v2, 3 = 3v3)", 12, -82 + Y0)
+    MakeLabel("Enemy comp key (sorted specs: 2 = 2v2, 3 = 3v3)", 12, -82 + Y0)
     f.compInput = MakeInput(340, 24, 12 + KILL_CC_FIELD_SHIFT_X, -100 + Y0, false)
     MakeLabel("Or select saved comp", 370, -82 + Y0)
     f.compDropdown = CreateFrame("Frame", "ArenaStickyCompDropdown", f, "UIDropDownMenuTemplate")
@@ -346,7 +418,7 @@ local function EnsureEditor()
     UIDropDownMenu_SetSelectedName(f.bracketDropdown, f.selectedBracket)
     UIDropDownMenu_SetText(f.bracketDropdown, BracketDropdownLabel(f.selectedBracket))
 
-    MakeLabel("Build Comp from Class Dropdowns", 185, -132 + Y0)
+    MakeLabel("Enemy specs (build key)", 185, -132 + Y0)
     f.compSlot1 = CreateFrame("Frame", "ArenaStickyCompSlot1Dropdown", f, "UIDropDownMenuTemplate")
     f.compSlot1:SetPoint("TOPLEFT", 175, BRACKET_ROW_DD_Y)
     UIDropDownMenu_SetWidth(f.compSlot1, 130)
@@ -370,18 +442,27 @@ local function EnsureEditor()
     UIDropDownMenu_SetText(f.compSlot2, DropdownSpecLabel(f.compSlot2Value))
     UIDropDownMenu_SetText(f.compSlot3, DropdownSpecLabel(f.compSlot3Value))
 
-    MakeLabel("Kill Target", 12, -188 + Y0)
-    f.killInput = MakeInput(170, 24, 12 + KILL_CC_FIELD_SHIFT_X, -206 + Y0, false)
+    -- Visual split between enemy-comp setup and your-team notes.
+    local sectionSep = f:CreateTexture(nil, "ARTWORK")
+    sectionSep:SetColorTexture(1, 1, 1, 0.15)
+    sectionSep:SetPoint("TOPLEFT", 12, -196 + Y0)
+    sectionSep:SetSize(670, 1)
 
-    MakeLabel("CC Target", 200, -188 + Y0)
-    f.ccInput = MakeInput(170, 24, 200 + KILL_CC_FIELD_SHIFT_X, -206 + Y0, false)
+    MakeSectionHeader("Your team", 12, -216 + Y0)
+    MakeHint("Your lineup vs. this enemy matchup — pick your spec and write the note for your role.", 12, -234 + Y0)
+    MakeLabel("Kill target (enemy)", 12, -258 + Y0)
+    f.killInput = MakeInput(170, 24, 12 + KILL_CC_FIELD_SHIFT_X, -276 + Y0, false)
 
-    MakeLabel("Class Notes (per class in this comp)", 12, -238 + Y0)
+    MakeLabel("CC target (enemy)", 200, -258 + Y0)
+    f.ccInput = MakeInput(170, 24, 200 + KILL_CC_FIELD_SHIFT_X, -276 + Y0, false)
+    f.cc2Label = MakeLabel("Swap target (enemy)", 390, -258 + Y0)
+    f.cc2Input = MakeInput(170, 24, 390 + KILL_CC_FIELD_SHIFT_X, -276 + Y0, false)
     f.noteRows = {}
-    local rowY = { -258 + Y0, -334 + Y0, -410 + Y0 }
+    local rowY = { -306 + Y0, -372 + Y0, -438 + Y0 }
     for i = 1, 3 do
         local row = {}
-        row.label = MakeLabel(("Class %d"):format(i), 12, rowY[i])
+        local rowNames = { "You", "Teammate 1", "Teammate 2" }
+        row.label = MakeLabel(rowNames[i] or ("Teammate " .. tostring(i - 1)), 12, rowY[i])
         row.dropdown = CreateFrame("Frame", "ArenaStickyClassNoteDropdown" .. i, f, "UIDropDownMenuTemplate")
         row.dropdown:SetPoint("TOPLEFT", 0, rowY[i] - 12)
         UIDropDownMenu_SetWidth(row.dropdown, 130)
@@ -401,9 +482,9 @@ local function EnsureEditor()
                     row.classValue = selectedClass
                     UIDropDownMenu_SetSelectedName(row.dropdown, selectedClass)
                     UIDropDownMenu_SetText(row.dropdown, DropdownSpecLabel(selectedClass))
-                    local key = (f.compInput:GetText() or ""):upper()
-                    local data = ArenaStickyDB.strategies[key]
-                    row.input:SetText((data and data.roles and data.roles[selectedClass]) or "")
+                    if f.UpdateNoteRowsFromComp then
+                        f:UpdateNoteRowsFromComp()
+                    end
                 end
                 UIDropDownMenu_AddButton(info, level)
             end
@@ -702,20 +783,48 @@ local function EnsureEditor()
             return
         end
 
+        local existing = ArenaStickyDB.strategies[key] or {}
+        local teamKey = BuildTeamCompKeyFromRows(f)
+        local rootHeader = existing.header or {}
+        local rootRoles = existing.roles or {}
         ArenaStickyDB.strategies[key] = {
-            header = {
-                kill = f.killInput:GetText() or "",
-                cc = f.ccInput:GetText() or "",
-            },
-            roles = (ArenaStickyDB.strategies[key] and ArenaStickyDB.strategies[key].roles) or {},
+            header = rootHeader,
+            roles = rootRoles,
+            teamVariants = existing.teamVariants or {},
         }
         local rowCount = (f.selectedBracket == "2v2") and 2 or 3
+        local variantRoles = {}
         for i = 1, rowCount do
             local row = f.noteRows[i]
             local editClass = row.classValue
             if editClass and editClass ~= "" then
-                ArenaStickyDB.strategies[key].roles[editClass] = row.input:GetText() or ""
+                variantRoles[editClass] = row.input:GetText() or ""
             end
+        end
+        local variantHeader = {
+            kill = f.killInput:GetText() or "",
+            cc = f.ccInput:GetText() or "",
+            swap = ((f.selectedBracket == "3v3") and (f.cc2Input:GetText() or "") or ""),
+        }
+        if teamKey and teamKey ~= "" then
+            ArenaStickyDB.strategies[key].teamVariants[teamKey] = {
+                header = variantHeader,
+                roles = variantRoles,
+            }
+            -- Keep top-level values usable as a generic fallback.
+            ArenaStickyDB.strategies[key].header = ArenaStickyDB.strategies[key].header or {}
+            ArenaStickyDB.strategies[key].header.kill = ArenaStickyDB.strategies[key].header.kill or variantHeader.kill
+            ArenaStickyDB.strategies[key].header.cc = ArenaStickyDB.strategies[key].header.cc or variantHeader.cc
+            ArenaStickyDB.strategies[key].header.swap = ArenaStickyDB.strategies[key].header.swap or variantHeader.swap
+            ArenaStickyDB.strategies[key].roles = ArenaStickyDB.strategies[key].roles or {}
+            for roleToken, txt in pairs(variantRoles) do
+                if ArenaStickyDB.strategies[key].roles[roleToken] == nil then
+                    ArenaStickyDB.strategies[key].roles[roleToken] = txt
+                end
+            end
+        else
+            ArenaStickyDB.strategies[key].header = variantHeader
+            ArenaStickyDB.strategies[key].roles = variantRoles
         end
         ArenaStickyDB.version = (ArenaStickyDB.version or 1) + 1
         ArenaStickyDB.lastUpdated = time()
@@ -726,31 +835,129 @@ local function EnsureEditor()
         UIDropDownMenu_SetSelectedName(f.compDropdown, key)
         UIDropDownMenu_SetText(f.compDropdown, ArenaSticky.CompKeyMenuLabel(key))
 
-        f.status:SetText("Saved " .. key .. " (v" .. ArenaStickyDB.version .. ")")
+        f.status:SetText("Saved " .. key .. (teamKey and (" / " .. teamKey) or "") .. " (v" .. ArenaStickyDB.version .. ")")
 
         if ArenaSticky.currentCompKey == key and ArenaSticky.mainFrame and ArenaSticky.mainFrame:IsShown() then
             local role = ArenaSticky.GetPlayerRoleToken and ArenaSticky.GetPlayerRoleToken() or nil
             local strat = ArenaStickyDB.strategies[key]
-            ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(strat.header.kill or "TBD", strat.header.cc or "TBD"))
+            ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(strat.header.kill or "TBD", strat.header.cc or "TBD", (strat.header and (strat.header.swap or strat.header.cc2)) or ""))
             ArenaSticky.bodyText:SetText((strat.roles and strat.roles[role]) or "No note for your class.")
         end
     end)
 
+    local pushScopeOverlay = CreateFrame("Frame", nil, f, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    pushScopeOverlay:SetFrameStrata("DIALOG")
+    pushScopeOverlay:SetFrameLevel((f:GetFrameLevel() or 0) + 96)
+    pushScopeOverlay:SetSize(420, 116)
+    pushScopeOverlay:SetPoint("CENTER", f, "CENTER", 0, -44)
+    pushScopeOverlay:EnableMouse(true)
+    pushScopeOverlay:Hide()
+    if pushScopeOverlay.SetBackdrop then
+        pushScopeOverlay:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 14,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+    end
+    local pushScopeTitle = pushScopeOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pushScopeTitle:SetPoint("TOP", 0, -12)
+    pushScopeTitle:SetText("Push which strategies to team?")
+
+    local function DoScopedPush(scope)
+        if not ArenaSticky.PushFullSync then return end
+        ArenaSticky:PushFullSync(scope)
+        pushScopeOverlay:Hide()
+        f.status:SetText("Pushed " .. tostring(scope) .. " strategy pack to team.")
+    end
+
+    local p2 = CreateFrame("Button", nil, pushScopeOverlay, "UIPanelButtonTemplate")
+    p2:SetSize(96, 24)
+    p2:SetText("2v2")
+    p2:SetPoint("BOTTOMLEFT", 16, 14)
+    p2:SetScript("OnClick", function() DoScopedPush("2v2") end)
+
+    local p3 = CreateFrame("Button", nil, pushScopeOverlay, "UIPanelButtonTemplate")
+    p3:SetSize(96, 24)
+    p3:SetText("3v3")
+    p3:SetPoint("LEFT", p2, "RIGHT", 10, 0)
+    p3:SetScript("OnClick", function() DoScopedPush("3v3") end)
+
+    local pAll = CreateFrame("Button", nil, pushScopeOverlay, "UIPanelButtonTemplate")
+    pAll:SetSize(112, 24)
+    pAll:SetText("All (2v2+3v3)")
+    pAll:SetPoint("LEFT", p3, "RIGHT", 10, 0)
+    pAll:SetScript("OnClick", function() DoScopedPush("all") end)
+
+    local pCancel = CreateFrame("Button", nil, pushScopeOverlay, "UIPanelButtonTemplate")
+    pCancel:SetSize(90, 22)
+    pCancel:SetText(CANCEL or "Cancel")
+    pCancel:SetPoint("TOPRIGHT", -10, -8)
+    pCancel:SetScript("OnClick", function() pushScopeOverlay:Hide() end)
+
     pushBtn:SetScript("OnClick", function()
-        if ArenaSticky.PushFullSync then
-            ArenaSticky:PushFullSync()
-            f.status:SetText("Pushed strategy pack to team (active profile).")
-        end
+        pushScopeOverlay:Show()
     end)
 
-    exportBtn:SetScript("OnClick", function()
-        if ArenaSticky.BuildExportStringActiveProfile then
-            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringActiveProfile()
-            if StaticPopup_Show then
-                StaticPopup_Show("ARENASTICKY_EXPORT_TEXT")
-            end
-            f.status:SetText("Export: copy the string from the popup (share online or backup).")
+    local exportScopeOverlay = CreateFrame("Frame", nil, f, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    exportScopeOverlay:SetFrameStrata("DIALOG")
+    exportScopeOverlay:SetFrameLevel((f:GetFrameLevel() or 0) + 95)
+    exportScopeOverlay:SetSize(420, 116)
+    exportScopeOverlay:SetPoint("CENTER", f, "CENTER", 0, -8)
+    exportScopeOverlay:EnableMouse(true)
+    exportScopeOverlay:Hide()
+    if exportScopeOverlay.SetBackdrop then
+        exportScopeOverlay:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 14,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+    end
+    local exportScopeTitle = exportScopeOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    exportScopeTitle:SetPoint("TOP", 0, -12)
+    exportScopeTitle:SetText("Export which strategies from active profile?")
+
+    local function DoScopedExport(scope)
+        if not ArenaSticky.BuildExportStringActiveProfile then return end
+        ArenaSticky.lastExportString = ArenaSticky.BuildExportStringActiveProfile(scope)
+        exportScopeOverlay:Hide()
+        if StaticPopup_Show then
+            StaticPopup_Show("ARENASTICKY_EXPORT_TEXT")
         end
+        f.status:SetText("Export " .. tostring(scope) .. ": copy the string from the popup.")
+    end
+
+    local ex2 = CreateFrame("Button", nil, exportScopeOverlay, "UIPanelButtonTemplate")
+    ex2:SetSize(96, 24)
+    ex2:SetText("2v2")
+    ex2:SetPoint("BOTTOMLEFT", 16, 14)
+    ex2:SetScript("OnClick", function() DoScopedExport("2v2") end)
+
+    local ex3 = CreateFrame("Button", nil, exportScopeOverlay, "UIPanelButtonTemplate")
+    ex3:SetSize(96, 24)
+    ex3:SetText("3v3")
+    ex3:SetPoint("LEFT", ex2, "RIGHT", 10, 0)
+    ex3:SetScript("OnClick", function() DoScopedExport("3v3") end)
+
+    local exAll = CreateFrame("Button", nil, exportScopeOverlay, "UIPanelButtonTemplate")
+    exAll:SetSize(112, 24)
+    exAll:SetText("All (2v2+3v3)")
+    exAll:SetPoint("LEFT", ex3, "RIGHT", 10, 0)
+    exAll:SetScript("OnClick", function() DoScopedExport("all") end)
+
+    local exCancel = CreateFrame("Button", nil, exportScopeOverlay, "UIPanelButtonTemplate")
+    exCancel:SetSize(90, 22)
+    exCancel:SetText(CANCEL or "Cancel")
+    exCancel:SetPoint("TOPRIGHT", -10, -8)
+    exCancel:SetScript("OnClick", function() exportScopeOverlay:Hide() end)
+
+    exportBtn:SetScript("OnClick", function()
+        exportScopeOverlay:Show()
     end)
 
     -- Multiline scroll box: long AS2/ASPACK2 strings + line breaks
@@ -774,7 +981,7 @@ local function EnsureEditor()
 
     local importOverlayTitle = importOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     importOverlayTitle:SetPoint("TOP", 0, -14)
-    importOverlayTitle:SetText("Import — AS2 / ASPACK2 (legacy AS1 / ASPACK1 OK)")
+    importOverlayTitle:SetText("Import — AS3/AS2/ASPACK2 (legacy AS1 / ASPACK1 OK)")
 
     local importScroll = CreateFrame("ScrollFrame", nil, importOverlay, "UIPanelScrollFrameTemplate")
     importScroll:SetPoint("TOPLEFT", 20, -44)
@@ -831,6 +1038,8 @@ local function EnsureEditor()
     end)
 
     f:SetScript("OnHide", function()
+        pushScopeOverlay:Hide()
+        exportScopeOverlay:Hide()
         importOverlay:Hide()
     end)
 

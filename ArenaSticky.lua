@@ -14,6 +14,7 @@ ArenaSticky.suppressAutoShow = false
 
 local UpdateNotesForComp
 local ApplyStickyMinimizedLayout
+local RebuildGuidUnitMap
 
 -- STRATSYNC reassembly (multi-part; addon messages are capped at 255 bytes)
 local stratSyncBuffers = {}
@@ -23,13 +24,13 @@ local ROLE_TOKENS = {
     "RET", "HPAL",
     "RSHAM", "ELE", "ENH",
     "DISC", "SHADOW",
-    "RESTO", "BOOMY", "FERAL",
+    "RDRUID", "BOOMY", "FERAL",
     -- Legacy/base tokens
     "PALADIN", "SHAMAN", "PRIEST", "DRUID",
 }
 
 local DEFAULT_SPEC_TOKEN = {
-    DRUID = "RESTO",
+    DRUID = "RDRUID",
     SHAMAN = "RSHAM",
     PRIEST = "DISC",
     PALADIN = "HPAL",
@@ -38,7 +39,7 @@ local DEFAULT_SPEC_TOKEN = {
 local AURA_SPEC_TOKEN = {
     ["Shadowform"] = "SHADOW",
     ["Vampiric Embrace"] = "SHADOW",
-    ["Tree of Life"] = "RESTO",
+    ["Tree of Life"] = "RDRUID",
     ["Moonkin Form"] = "BOOMY",
     ["Earth Shield"] = "RSHAM",
     ["Crusader Strike"] = "RET", -- debuff name in some builds; harmless if absent
@@ -47,7 +48,7 @@ local AURA_SPEC_TOKEN = {
 local SPELL_SPEC_TOKEN = {
     ["Shadowform"] = "SHADOW",
     ["Vampiric Touch"] = "SHADOW",
-    ["Tree of Life"] = "RESTO",
+    ["Tree of Life"] = "RDRUID",
     ["Moonkin Form"] = "BOOMY",
     ["Earth Shield"] = "RSHAM",
     ["Elemental Mastery"] = "ELE",
@@ -56,6 +57,25 @@ local SPELL_SPEC_TOKEN = {
     ["Crusader Strike"] = "RET",
     ["Divine Storm"] = "RET",
     ["Holy Shock"] = "HPAL",
+    -- Class hints when an enemy was stealthed / spec not yet known (token must match UnitClass).
+    ["Cheap Shot"] = "ROGUE",
+    ["Ambush"] = "ROGUE",
+    ["Backstab"] = "ROGUE",
+    ["Sinister Strike"] = "ROGUE",
+    ["Gouge"] = "ROGUE",
+    ["Kidney Shot"] = "ROGUE",
+    ["Shadowstep"] = "ROGUE",
+    ["Mutilate"] = "ROGUE",
+    ["Ghostly Strike"] = "ROGUE",
+    ["Ice Lance"] = "MAGE",
+    ["Frostbolt"] = "MAGE",
+    ["Fireball"] = "MAGE",
+    ["Scorch"] = "MAGE",
+    ["Arcane Blast"] = "MAGE",
+    ["Polymorph"] = "MAGE",
+    ["Frost Nova"] = "MAGE",
+    ["Blink"] = "MAGE",
+    ["Counterspell"] = "MAGE",
 }
 
 local COMP_ALIASES = {
@@ -76,7 +96,7 @@ ArenaSticky.SPEC_ICONS = {
     ENH = "Interface\\Icons\\Ability_Shaman_Stormstrike",
     DISC = "Interface\\Icons\\Spell_Holy_PowerWordShield",
     SHADOW = "Interface\\Icons\\Spell_Shadow_ShadowWordPain",
-    RESTO = "Interface\\Icons\\Spell_Nature_HealingTouch",
+    RDRUID = "Interface\\Icons\\Spell_Nature_HealingTouch",
     BOOMY = "Interface\\Icons\\Spell_Nature_StarFall",
     FERAL = "Interface\\Icons\\Ability_Druid_CatForm",
     PALADIN = "Interface\\Icons\\Spell_Holy_SealOfMight",
@@ -115,7 +135,7 @@ function ArenaSticky.BestSpecTokenForNoteText(str)
     if not str or str == "" or str == "TBD" then return nil end
     local l = string.lower(str)
     local ordered = {
-        { "resto druid", "RESTO" }, { "resto sham", "RSHAM" }, { "resto shaman", "RSHAM" }, { "rsham", "RSHAM" },
+        { "resto druid", "RDRUID" }, { "resto sham", "RSHAM" }, { "resto shaman", "RSHAM" }, { "rsham", "RSHAM" },
         { "feral druid", "FERAL" }, { "feral", "FERAL" },
         { "balance druid", "BOOMY" }, { "boomkin", "BOOMY" }, { "moonkin", "BOOMY" }, { "balance", "BOOMY" },
         { "shadow priest", "SHADOW" },
@@ -124,7 +144,7 @@ function ArenaSticky.BestSpecTokenForNoteText(str)
         { "holy paladin", "HPAL" }, { "holy pal", "HPAL" },
         { "ret paladin", "RET" }, { "retribution", "RET" },
         { "warlock", "WARLOCK" }, { "mage", "MAGE" }, { "rogue", "ROGUE" }, { "hunter", "HUNTER" },
-        { "priest", "DISC" }, { "druid", "RESTO" }, { "paladin", "HPAL" }, { "shaman", "RSHAM" },
+        { "priest", "DISC" }, { "druid", "RDRUID" }, { "paladin", "HPAL" }, { "shaman", "RSHAM" },
         { "warrior", "WARRIOR" }, { "arms", "WARRIOR" }, { "fury", "WARRIOR" },
     }
     for _, pair in ipairs(ordered) do
@@ -143,29 +163,40 @@ function ArenaSticky.BestSpecTokenForNoteText(str)
     return nil
 end
 
-function ArenaSticky.FormatStickyHeaderKillCc(killText, ccText)
+function ArenaSticky.FormatStickyHeaderKillCc(killText, ccText, swapText)
     killText = killText or "TBD"
     ccText = ccText or "TBD"
+    swapText = swapText or ""
     local kt = ArenaSticky.BestSpecTokenForNoteText(killText)
     local ct = ArenaSticky.BestSpecTokenForNoteText(ccText)
-    local ks = (kt and (ArenaSticky.SpecIconInline(kt, 18) .. " ") or "") .. killText
-    local cs = (ct and (ArenaSticky.SpecIconInline(ct, 18) .. " ") or "") .. ccText
-    return ("Kill: %s  |  CC: %s"):format(ks, cs)
+    local st = ArenaSticky.BestSpecTokenForNoteText(swapText)
+    local kIcon = kt and ArenaSticky.SpecIconInline(kt, 18) or "|cff888888?|r"
+    local cIcon = ct and ArenaSticky.SpecIconInline(ct, 18) or "|cff888888?|r"
+    local sIcon = st and ArenaSticky.SpecIconInline(st, 18) or "|cff888888?|r"
+    if swapText ~= "" and swapText ~= "TBD" then
+        return ("%s Kill: %s\n%s CC: %s\n%s Swap: %s"):format(kIcon, killText, cIcon, ccText, sIcon, swapText)
+    end
+    return ("%s Kill: %s\n%s CC: %s"):format(kIcon, killText, cIcon, ccText)
 end
 
 --- Minimized sticky: labels + spec icons only (no kill/cc body text).
-function ArenaSticky.FormatStickyHeaderKillCcCompact(killText, ccText)
+function ArenaSticky.FormatStickyHeaderKillCcCompact(killText, ccText, swapText)
     killText = killText or "TBD"
     ccText = ccText or "TBD"
+    swapText = swapText or ""
     local kt = ArenaSticky.BestSpecTokenForNoteText(killText)
     local ct = ArenaSticky.BestSpecTokenForNoteText(ccText)
+    local st = ArenaSticky.BestSpecTokenForNoteText(swapText)
     local function iconOrMark(tok)
         if tok and ArenaSticky.SpecIconTexture(tok) then
             return ArenaSticky.SpecIconInline(tok, 20)
         end
         return "|cff888888?|r"
     end
-    return ("Kill: %s  |  CC: %s"):format(iconOrMark(kt), iconOrMark(ct))
+    if swapText ~= "" and swapText ~= "TBD" then
+        return ("%s Kill\n%s CC\n%s Swap"):format(iconOrMark(kt), iconOrMark(ct), iconOrMark(st))
+    end
+    return ("%s Kill\n%s CC"):format(iconOrMark(kt), iconOrMark(ct))
 end
 
 local function DeepCopy(tbl)
@@ -180,6 +211,317 @@ end
 local function NormalizeCompKey(classes)
     table.sort(classes)
     return table.concat(classes, "-")
+end
+
+local META_2V2_COMPS = {
+    "DISC-ROGUE", "MAGE-ROGUE", "DISC-MAGE", "DISC-WARLOCK", "DISC-HUNTER",
+    "RDRUID-WARRIOR", "RSHAM-WARRIOR", "HPAL-WARRIOR", "RDRUID-ROGUE", "MAGE-WARLOCK",
+}
+
+local META_3V3_COMPS = {
+    "DISC-MAGE-ROGUE", "RSHAM-WARRIOR-WARLOCK", "RDRUID-WARRIOR-WARLOCK", "RET-RSHAM-WARRIOR", "MAGE-RDRUID-WARRIOR",
+    "ENH-RSHAM-WARRIOR", "DISC-HUNTER-ROGUE", "RDRUID-ROGUE-WARLOCK", "RSHAM-ROGUE-WARLOCK", "DISC-ROGUE-WARLOCK",
+}
+
+local HEALER_TOKENS = { "DISC", "RSHAM", "RDRUID", "HPAL" }
+
+local function SplitCompKeyTokens(compKey)
+    local body = compKey and (compKey:match("^%d%-(.+)$") or compKey) or ""
+    local out = {}
+    for p in body:gmatch("[^-]+") do
+        out[#out + 1] = p
+    end
+    return out
+end
+
+local function IsHealerToken(tok)
+    return tok == "DISC" or tok == "HPAL" or tok == "RSHAM" or tok == "RDRUID"
+end
+
+local function BuildHealerSwapVariants3v3(compKey)
+    local parts = SplitCompKeyTokens(compKey)
+    if #parts ~= 3 then
+        return { compKey }
+    end
+    local dps = {}
+    local heals = {}
+    for _, t in ipairs(parts) do
+        if IsHealerToken(t) then
+            heals[#heals + 1] = t
+        else
+            dps[#dps + 1] = t
+        end
+    end
+    if #dps ~= 2 or #heals ~= 1 then
+        return { compKey }
+    end
+    local out = {}
+    for _, h in ipairs(HEALER_TOKENS) do
+        out[#out + 1] = NormalizeCompKey({ dps[1], dps[2], h })
+    end
+    return out
+end
+
+local function GuessTargetsForEnemyComp(enemyCompKey, is3v3)
+    local parts = SplitCompKeyTokens(enemyCompKey)
+    if #parts == 0 then
+        return "TBD", "TBD", ""
+    end
+    local dps = {}
+    local heal = {}
+    for _, t in ipairs(parts) do
+        if IsHealerToken(t) then
+            heal[#heal + 1] = t
+        else
+            dps[#dps + 1] = t
+        end
+    end
+    -- Special rule: vs Warrior + double healer, never set kill to Warrior.
+    if is3v3 and #parts == 3 and #heal == 2 and #dps == 1 and dps[1] == "WARRIOR" then
+        local kill = heal[1] or parts[1] or "TBD"
+        local cc = heal[2] or "WARRIOR"
+        local cc2 = "WARRIOR"
+        return kill, cc, cc2
+    end
+    local kill = dps[1] or parts[1] or "TBD"
+    local cc = heal[1] or dps[2] or parts[2] or "TBD"
+    local cc2 = ""
+    if is3v3 then
+        cc2 = dps[2] or heal[2] or parts[3] or ""
+        if cc2 == kill or cc2 == cc then
+            cc2 = parts[3] or ""
+            if cc2 == kill or cc2 == cc then
+                cc2 = ""
+            end
+        end
+    end
+    return kill, cc, cc2
+end
+
+local function NormalizeHeaderTargets(enemyCompKey, is3v3, header)
+    header = header or {}
+    local parts = SplitCompKeyTokens(enemyCompKey)
+    local kill = header.kill or "TBD"
+    local cc = header.cc or "TBD"
+    local swap = header.swap or header.cc2 or ""
+
+    -- Ensure kill exists in comp when possible.
+    local inComp = {}
+    for _, p in ipairs(parts) do
+        inComp[p] = true
+    end
+    if not inComp[kill] then
+        kill = parts[1] or kill
+    end
+
+    -- CC must never be the same as Kill.
+    if cc == kill or cc == "" or cc == "TBD" or not inComp[cc] then
+        cc = ""
+        for _, p in ipairs(parts) do
+            if p ~= kill then
+                cc = p
+                break
+            end
+        end
+        if cc == "" then
+            cc = "TBD"
+        end
+    end
+
+    if not is3v3 then
+        return kill, cc, ""
+    end
+
+    -- SWAP may equal CC, but must never equal KILL.
+    if swap == "" or swap == "TBD" or not inComp[swap] or swap == kill then
+        if cc ~= "" and cc ~= "TBD" and cc ~= kill then
+            swap = cc
+        else
+            swap = ""
+            for _, p in ipairs(parts) do
+                if p ~= kill then
+                    swap = p
+                    break
+                end
+            end
+        end
+    end
+    if swap == kill then
+        swap = ""
+    end
+    return kill, cc, swap
+end
+
+local function BuildDoubleHealerWarriorComps()
+    local out = {}
+    for i = 1, #HEALER_TOKENS do
+        for j = i + 1, #HEALER_TOKENS do
+            out[#out + 1] = NormalizeCompKey({ "WARRIOR", HEALER_TOKENS[i], HEALER_TOKENS[j] })
+        end
+    end
+    return out
+end
+
+local function EnsureRoleNotes(roles, enemyCompKey, yourCompKey, kill, cc, swap)
+    roles = roles or {}
+    local enemy = {}
+    for _, t in ipairs(SplitCompKeyTokens(enemyCompKey)) do
+        enemy[t] = true
+    end
+    local function IsAutoGeneratedNote(s)
+        if type(s) ~= "string" then return false end
+        if s:match("^Vs .+ as .+: pressure .+ control .+team comp") then
+            return true
+        end
+        if s:match("^Kill .+, CC .+") then
+            return true
+        end
+        return false
+    end
+    local function BuildRoleNote(token)
+        if token == "DISC" then
+            if enemy.ROGUE then
+                return "Pre-shield opener; fear your go. Trinket only lethal kidney chain."
+            end
+            return "Pre-shield opener; fear your go; dispel key crowd control."
+        elseif token == "RDRUID" then
+            if enemy.MAGE and enemy.ROGUE then
+                return "Pre-hot opener; clone stuns; trinket only if partner dies."
+            end
+            return "Pre-hot opener; clone on stuns; kite melee uptime."
+        elseif token == "RSHAM" then
+            if enemy.WARLOCK then
+                return "Ground key cast; shear setup target; trinket only kill cross-CC."
+            end
+            return "Ground key cast; shear setup target; purge before your go."
+        elseif token == "HPAL" then
+            return "Hold freedom/sac for go; hoj swaps; avoid overlapping defensives."
+        elseif token == "ROGUE" then
+            if enemy.ROGUE then
+                return "Stun on DR windows; deny re-open; peel first enemy go."
+            end
+            return "Stun on DR windows; force trinket; reset for clean re-go."
+        elseif token == "MAGE" then
+            if enemy.MAGE and enemy.ROGUE then
+                return "Win poly race; peel burst; trinket only lethal stun-poly."
+            end
+            return "Win poly race; CS defensive cast; peel enemy burst."
+        elseif token == "WARRIOR" then
+            return "Disarm enemy go; keep uptime; swap only on clean setup."
+        elseif token == "WARLOCK" then
+            return "Maintain spread pressure; fear off-target; port early versus melee."
+        elseif token == "HUNTER" then
+            return "Trap off team CC; force trinkets; kite melee before re-go."
+        elseif token == "RET" then
+            return "Hold wings for clean chain; freedom your go; bop counter-go."
+        elseif token == "SHADOW" then
+            return "Silence healer on go; fear off-target; hold dispersion swaps."
+        elseif token == "ENH" then
+            return "Ground/shear setup casts; wolves on go; kite after burst."
+        elseif token == "ELE" then
+            return "Keep flameshocks spread; shear setup casts; thunderstorm melee uptime."
+        elseif token == "BOOMY" then
+            return "Root-beam your go; clone off-target; kite after cooldown trade."
+        elseif token == "FERAL" then
+            return "Clone off-target on DR; peel enemy go; reset clean burst."
+        end
+        return "Track enemy cooldowns; avoid overlap; reset for clean setups."
+    end
+    for _, token in ipairs(ROLE_TOKENS) do
+        local cur = roles[token]
+        if cur == nil or cur == "" or IsAutoGeneratedNote(cur) then
+            roles[token] = BuildRoleNote(token)
+        end
+    end
+    return roles
+end
+
+local function EnsureMetaMatchupCoverage(strategies)
+    if type(strategies) ~= "table" then
+        return strategies
+    end
+    local function upsertBracket(metaList, is3v3)
+        local expandedEnemy = {}
+        local seenEnemy = {}
+        local expandedYour = {}
+        local seenYour = {}
+        for _, enemyComp in ipairs(metaList) do
+            local variants = is3v3 and BuildHealerSwapVariants3v3(enemyComp) or { enemyComp }
+            for _, v in ipairs(variants) do
+                if not seenEnemy[v] then
+                    seenEnemy[v] = true
+                    expandedEnemy[#expandedEnemy + 1] = v
+                end
+            end
+        end
+        for _, yourComp in ipairs(metaList) do
+            local variants = is3v3 and BuildHealerSwapVariants3v3(yourComp) or { yourComp }
+            for _, v in ipairs(variants) do
+                if not seenYour[v] then
+                    seenYour[v] = true
+                    expandedYour[#expandedYour + 1] = v
+                end
+            end
+        end
+        if is3v3 then
+            for _, c in ipairs(BuildDoubleHealerWarriorComps()) do
+                if not seenEnemy[c] then
+                    seenEnemy[c] = true
+                    expandedEnemy[#expandedEnemy + 1] = c
+                end
+                if not seenYour[c] then
+                    seenYour[c] = true
+                    expandedYour[#expandedYour + 1] = c
+                end
+            end
+        end
+
+        for _, enemyComp in ipairs(expandedEnemy) do
+            local entry = strategies[enemyComp]
+            if type(entry) ~= "table" then
+                entry = { header = {}, roles = {}, teamVariants = {} }
+                strategies[enemyComp] = entry
+            end
+            entry.header = entry.header or {}
+            entry.roles = entry.roles or {}
+            entry.teamVariants = entry.teamVariants or {}
+
+            local baseKill, baseCc, baseCc2 = GuessTargetsForEnemyComp(enemyComp, is3v3)
+            if not entry.header.kill or entry.header.kill == "" then entry.header.kill = baseKill end
+            if not entry.header.cc or entry.header.cc == "" then entry.header.cc = baseCc end
+            if is3v3 and (not entry.header.swap or entry.header.swap == "") then entry.header.swap = baseCc2 end
+            if not is3v3 then entry.header.swap = "" end
+            if entry.header.swap == nil and entry.header.cc2 ~= nil then entry.header.swap = entry.header.cc2 end
+            entry.header.kill, entry.header.cc, entry.header.swap = NormalizeHeaderTargets(enemyComp, is3v3, entry.header)
+            entry.roles = EnsureRoleNotes(entry.roles, enemyComp, nil, entry.header.kill, entry.header.cc, entry.header.swap)
+
+            for _, yourComp in ipairs(expandedYour) do
+                local teamKey = NormalizeCompKey(SplitCompKeyTokens(yourComp))
+                local tv = entry.teamVariants[teamKey]
+                if type(tv) ~= "table" then
+                    tv = { header = {}, roles = {} }
+                    entry.teamVariants[teamKey] = tv
+                end
+                tv.header = tv.header or {}
+                tv.roles = tv.roles or {}
+                local kill, cc, cc2 = GuessTargetsForEnemyComp(enemyComp, is3v3)
+                if not tv.header.kill or tv.header.kill == "" then tv.header.kill = kill end
+                if not tv.header.cc or tv.header.cc == "" then tv.header.cc = cc end
+                if is3v3 then
+                    if not tv.header.swap or tv.header.swap == "" then tv.header.swap = cc2 end
+                else
+                    tv.header.swap = ""
+                end
+                if tv.header.swap == nil and tv.header.cc2 ~= nil then tv.header.swap = tv.header.cc2 end
+                tv.header.kill, tv.header.cc, tv.header.swap = NormalizeHeaderTargets(enemyComp, is3v3, tv.header)
+                tv.roles = EnsureRoleNotes(tv.roles, enemyComp, yourComp, tv.header.kill, tv.header.cc, tv.header.swap)
+            end
+        end
+    end
+
+    upsertBracket(META_2V2_COMPS, false)
+    upsertBracket(META_3V3_COMPS, true)
+    return strategies
 end
 
 local function MergeMissingStrategies(dest, src)
@@ -198,12 +540,24 @@ local function MergeMissingStrategies(dest, src)
                 if dest[key].header.cc == nil then
                     dest[key].header.cc = strat.header.cc
                 end
+                if dest[key].header.swap == nil then
+                    dest[key].header.swap = strat.header.swap or strat.header.cc2
+                end
             end
             dest[key].roles = dest[key].roles or {}
             if type(strat.roles) == "table" then
                 for roleToken, roleText in pairs(strat.roles) do
                     if dest[key].roles[roleToken] == nil then
                         dest[key].roles[roleToken] = roleText
+                    end
+                end
+            end
+            -- Preserve team-specific variants if defaults ever ship them.
+            if type(strat.teamVariants) == "table" then
+                dest[key].teamVariants = dest[key].teamVariants or {}
+                for teamKey, v in pairs(strat.teamVariants) do
+                    if dest[key].teamVariants[teamKey] == nil then
+                        dest[key].teamVariants[teamKey] = DeepCopy(v)
                     end
                 end
             end
@@ -250,7 +604,7 @@ local function ToLegacyClassToken(token)
     if token == "RET" or token == "HPAL" then return "PALADIN" end
     if token == "RSHAM" or token == "ELE" or token == "ENH" then return "SHAMAN" end
     if token == "DISC" or token == "SHADOW" then return "PRIEST" end
-    if token == "RESTO" or token == "BOOMY" or token == "FERAL" then return "DRUID" end
+    if token == "RDRUID" or token == "BOOMY" or token == "FERAL" then return "DRUID" end
     return token
 end
 
@@ -266,7 +620,7 @@ end
 
 local function FromLegacyClassToken(token)
     token = token and token:upper() or token
-    if token == "DRUID" then return "RESTO" end
+    if token == "DRUID" then return "RDRUID" end
     if token == "SHAMAN" then return "RSHAM" end
     if token == "PRIEST" then return "DISC" end
     if token == "PALADIN" then return "HPAL" end
@@ -668,6 +1022,84 @@ local function MigrateBracketPrefixedKeysAllProfiles()
     end
 end
 
+local function NormalizeRestoToken(tok)
+    if tok == "RESTO" then
+        return "RDRUID"
+    end
+    return tok
+end
+
+local function NormalizeCompKeyRestoToRdruid(key)
+    if type(key) ~= "string" or key == "" then
+        return key
+    end
+    local body = key:match("^%d%-(.+)$") or key
+    local parts = {}
+    for p in body:gmatch("[^-]+") do
+        parts[#parts + 1] = NormalizeRestoToken((p or ""):upper())
+    end
+    return NormalizeCompKey(parts)
+end
+
+local function NormalizeStrategyEntryRestoToRdruid(v)
+    if type(v) ~= "table" then return end
+    v.roles = v.roles or {}
+    if v.roles.RESTO ~= nil and v.roles.RDRUID == nil then
+        v.roles.RDRUID = v.roles.RESTO
+    end
+    v.roles.RESTO = nil
+    if type(v.teamVariants) == "table" then
+        local newVariants = {}
+        for teamKey, tv in pairs(v.teamVariants) do
+            local nk = NormalizeCompKeyRestoToRdruid(teamKey)
+            if type(tv) == "table" then
+                tv.roles = tv.roles or {}
+                if tv.roles.RESTO ~= nil and tv.roles.RDRUID == nil then
+                    tv.roles.RDRUID = tv.roles.RESTO
+                end
+                tv.roles.RESTO = nil
+            end
+            if newVariants[nk] == nil then
+                newVariants[nk] = tv
+            end
+        end
+        v.teamVariants = newVariants
+    end
+end
+
+local function MigrateRestoToRdruidInStrategies(strategies)
+    if type(strategies) ~= "table" then return end
+    local remove = {}
+    local add = {}
+    for k, v in pairs(strategies) do
+        if type(k) == "string" then
+            local nk = NormalizeCompKeyRestoToRdruid(k)
+            if nk and nk ~= k then
+                add[nk] = add[nk] or v
+                remove[#remove + 1] = k
+            end
+        end
+        if type(v) == "table" then
+            NormalizeStrategyEntryRestoToRdruid(v)
+        end
+    end
+    for _, k in ipairs(remove) do
+        strategies[k] = nil
+    end
+    for k, v in pairs(add) do
+        strategies[k] = v
+    end
+end
+
+local function MigrateRestoToRdruidAllProfiles()
+    if not ArenaStickyDB or type(ArenaStickyDB.profiles) ~= "table" then return end
+    for _, prof in pairs(ArenaStickyDB.profiles) do
+        if type(prof) == "table" and type(prof.strategies) == "table" then
+            MigrateRestoToRdruidInStrategies(prof.strategies)
+        end
+    end
+end
+
 --- Coerce bad SavedVariables (strings/tables) so Frame APIs do not error (e.g. SetPoint "invalid argument").
 local function SanitizeWindowDB()
     if not ArenaStickyDB then return end
@@ -749,6 +1181,7 @@ local function EnsureDB()
 
     SyncActiveProfilePointers()
     MigrateBracketPrefixedKeysAllProfiles()
+    MigrateRestoToRdruidAllProfiles()
     SyncActiveProfilePointers()
     -- New/blank profiles set skipDefaultStrategyMerge so they stay empty (no baked-in default comps).
     local ap = ArenaStickyDB.activeProfile or "Default"
@@ -756,16 +1189,18 @@ local function EnsureDB()
     if not prof or not prof.skipDefaultStrategyMerge then
         ArenaStickyDB.strategies = MergeMissingStrategies(ArenaStickyDB.strategies, DEFAULT_STRATEGIES)
     end
+    MigrateRestoToRdruidAllProfiles()
+    ArenaStickyDB.strategies = EnsureMetaMatchupCoverage(ArenaStickyDB.strategies)
     SyncActiveProfilePointers()
 end
 
 --- Full vs compact Kill/CC line depending on minimized state (used by sticky + editor).
-function ArenaSticky.FormatStickyHeaderKillCcForWindow(killText, ccText)
+function ArenaSticky.FormatStickyHeaderKillCcForWindow(killText, ccText, swapText)
     EnsureDB()
     if ArenaStickyDB.window and ArenaStickyDB.window.minimized then
-        return ArenaSticky.FormatStickyHeaderKillCcCompact(killText, ccText)
+        return ArenaSticky.FormatStickyHeaderKillCcCompact(killText, ccText, swapText)
     end
-    return ArenaSticky.FormatStickyHeaderKillCc(killText, ccText)
+    return ArenaSticky.FormatStickyHeaderKillCc(killText, ccText, swapText)
 end
 
 local function PickRandomStrategyCompKey()
@@ -814,7 +1249,7 @@ local function GetMyRole()
         elseif class == "DRUID" then
             if bestTab == 1 then return "BOOMY" end
             if bestTab == 2 then return "FERAL" end
-            return "RESTO"
+            return "RDRUID"
         elseif class == "SHAMAN" then
             if bestTab == 1 then return "ELE" end
             if bestTab == 2 then return "ENH" end
@@ -829,6 +1264,81 @@ local function GetMyRole()
     return class
 end
 
+local function ClassToDefaultSpecToken(class)
+    if class == "PRIEST" then return "DISC" end
+    if class == "DRUID" then return "RDRUID" end
+    if class == "SHAMAN" then return "RSHAM" end
+    if class == "PALADIN" then return "HPAL" end
+    return class
+end
+
+local function BuildTeamCompKey(tokens)
+    local t = {}
+    for _, tok in ipairs(tokens or {}) do
+        if tok and tok ~= "" and tok ~= "NONE" then
+            t[#t + 1] = string.upper(tok)
+        end
+    end
+    if #t < 2 then
+        return nil
+    end
+    table.sort(t)
+    return table.concat(t, "-")
+end
+
+local function CountCompTokens(compKey)
+    local body = compKey and (compKey:match("^%d%-(.+)$") or compKey) or ""
+    local n = 0
+    for _ in body:gmatch("[^-]+") do
+        n = n + 1
+    end
+    return n
+end
+
+local function GetCurrentFriendlyTeamCompKey(enemyCompKey)
+    local want = math.max(2, math.min(3, CountCompTokens(enemyCompKey)))
+    local tokens = {}
+    local myTok = GetMyRole()
+    if not myTok or myTok == "" then
+        local _, myClass = UnitClass("player")
+        myTok = ClassToDefaultSpecToken(myClass)
+    end
+    if myTok and myTok ~= "" then
+        tokens[#tokens + 1] = myTok
+    end
+    for i = 1, want - 1 do
+        local unit = "party" .. i
+        if UnitExists(unit) then
+            local _, class = UnitClass(unit)
+            local tok = ClassToDefaultSpecToken(class)
+            if tok and tok ~= "" then
+                tokens[#tokens + 1] = tok
+            end
+        end
+    end
+    if #tokens < want then
+        return nil
+    end
+    return BuildTeamCompKey(tokens)
+end
+
+local function SelectStrategyForTeamComp(baseStrategy, enemyCompKey)
+    if not baseStrategy then return nil end
+    local byTeam = baseStrategy.teamVariants
+    if type(byTeam) ~= "table" then
+        return baseStrategy
+    end
+    local teamKey = GetCurrentFriendlyTeamCompKey(enemyCompKey)
+    if teamKey and byTeam[teamKey] then
+        local v = byTeam[teamKey]
+        return {
+            header = v.header or baseStrategy.header or {},
+            roles = v.roles or baseStrategy.roles or {},
+        }
+    end
+    return baseStrategy
+end
+
 --- Spec tokens must match unit class. Otherwise we mis-detect allied buffs/debuffs
 --- (e.g. Earth Shield on a Warrior from an enemy RSham reads as RSHAM on the Warrior).
 local function SpecTokenMatchesClass(token, class)
@@ -836,7 +1346,7 @@ local function SpecTokenMatchesClass(token, class)
     if token == "RSHAM" or token == "ELE" or token == "ENH" then return class == "SHAMAN" end
     if token == "RET" or token == "HPAL" then return class == "PALADIN" end
     if token == "DISC" or token == "SHADOW" then return class == "PRIEST" end
-    if token == "RESTO" or token == "BOOMY" or token == "FERAL" then return class == "DRUID" end
+    if token == "RDRUID" or token == "BOOMY" or token == "FERAL" then return class == "DRUID" end
     if token == "WARRIOR" or token == "HUNTER" or token == "ROGUE" or token == "MAGE" or token == "WARLOCK" then
         return token == class
     end
@@ -930,7 +1440,7 @@ local function ApplyStealthInference(slots, teamMotw, teamLotp)
         if feralHint then
             s.token = "FERAL"
         elseif restoHint then
-            s.token = "RESTO"
+            s.token = "RDRUID"
         else
             s.token = "ROGUE"
         end
@@ -939,9 +1449,9 @@ local function ApplyStealthInference(slots, teamMotw, teamLotp)
         if feralHint then
             slots[a].token, slots[b].token = "ROGUE", "FERAL"
         elseif restoHint then
-            slots[a].token, slots[b].token = "ROGUE", "RESTO"
+            slots[a].token, slots[b].token = "ROGUE", "RDRUID"
         else
-            slots[a].token, slots[b].token = "ROGUE", "RESTO"
+            slots[a].token, slots[b].token = "ROGUE", "RDRUID"
         end
     else
         for _, idx in ipairs(unkIdx) do
@@ -950,11 +1460,11 @@ local function ApplyStealthInference(slots, teamMotw, teamLotp)
         if feralHint then
             slots[unkIdx[1]].token = "FERAL"
         elseif teamMotw then
-            slots[unkIdx[1]].token = "RESTO"
+            slots[unkIdx[1]].token = "RDRUID"
         else
             for _, idx in ipairs(unkIdx) do
                 if select(1, ScanUnitWildAndLotpHints(slots[idx].unit)) then
-                    slots[idx].token = "RESTO"
+                    slots[idx].token = "RDRUID"
                     break
                 end
             end
@@ -1026,6 +1536,25 @@ local function InArenaWithOpponents()
         if UnitExists("arena" .. i) then return true end
     end
     return false
+end
+
+--- How many enemy arena frames exist right now (1–3).
+local function CountArenaEnemyUnits()
+    local c = 0
+    for i = 1, 3 do
+        if UnitExists("arena" .. i) then
+            c = c + 1
+        end
+    end
+    return c
+end
+
+--- True when this match is 3v3: API says 3 opponents, or we've ever seen three arena units this match.
+local function IsThreeManArenaMatch()
+    if GetNumArenaOpponents and GetNumArenaOpponents() == 3 then
+        return true
+    end
+    return (ArenaSticky.maxArenaEnemyUnitsSeen or 0) >= 3
 end
 
 local function UpdateEnemyDetectText()
@@ -1118,14 +1647,15 @@ local function CreateMainFrame()
     detect:SetNonSpaceWrap(true)
     detect:SetText("Detected: —")
 
-    local header = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    -- Larger font so Kill/CC is readable at a glance.
+    local header = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     header:SetPoint("TOPLEFT", 12, -54)
     header:SetJustifyH("LEFT")
     header:SetWidth(295)
     header:SetText(ArenaSticky.FormatStickyHeaderKillCc("?", "?"))
 
     local body = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    body:SetPoint("TOPLEFT", 12, -80)
+    body:SetPoint("TOPLEFT", 12, -146)
     body:SetJustifyH("LEFT")
     body:SetJustifyV("TOP")
     body:SetWidth(295)
@@ -1181,13 +1711,13 @@ local function CreateMainFrame()
             cfg.width = cfg.widthBeforeMin
             cfg.height = cfg.heightBeforeMin
             cfg.minimized = true
-            f:SetSize(200, 52)
+            f:SetSize(100, 100)
         end
         ApplyStickyMinimizedLayout()
         if ArenaSticky.currentCompKey then
             UpdateNotesForComp(ArenaSticky.currentCompKey, true)
         else
-            header:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow("TBD", "TBD"))
+            header:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow("TBD", "TBD", ""))
         end
     end)
 
@@ -1216,7 +1746,10 @@ ApplyStickyMinimizedLayout = function()
     local minBtn = ArenaSticky.minimizeButton
 
     if mini then
-        f:SetSize(200, 52)
+        if f.SetMinResize then
+            f:SetMinResize(120, 70)
+        end
+        f:SetSize(100, 100)
         if ArenaSticky.titleText then ArenaSticky.titleText:Hide() end
         if ArenaSticky.detectText then ArenaSticky.detectText:Hide() end
         if ArenaSticky.bodyText then ArenaSticky.bodyText:Hide() end
@@ -1224,8 +1757,8 @@ ApplyStickyMinimizedLayout = function()
         if ArenaSticky.resizeHandle then ArenaSticky.resizeHandle:Hide() end
         if ArenaSticky.headerText then
             ArenaSticky.headerText:ClearAllPoints()
-            ArenaSticky.headerText:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -12)
-            ArenaSticky.headerText:SetWidth(math.max(f:GetWidth() - 36, 80))
+            ArenaSticky.headerText:SetPoint("TOPLEFT", f, "TOPLEFT", 7, -10)
+            ArenaSticky.headerText:SetWidth(math.max(f:GetWidth() - 22, 70))
         end
         if minBtn then
             minBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-BiggerButton-Up")
@@ -1233,6 +1766,9 @@ ApplyStickyMinimizedLayout = function()
             minBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-BiggerButton-Highlight")
         end
     else
+        if f.SetMinResize then
+            f:SetMinResize(260, 140)
+        end
         if ArenaSticky.titleText then ArenaSticky.titleText:Show() end
         if ArenaSticky.detectText then ArenaSticky.detectText:Show() end
         if ArenaSticky.bodyText then ArenaSticky.bodyText:Show() end
@@ -1246,7 +1782,7 @@ ApplyStickyMinimizedLayout = function()
         end
         if ArenaSticky.bodyText then
             ArenaSticky.bodyText:ClearAllPoints()
-            ArenaSticky.bodyText:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -80)
+            ArenaSticky.bodyText:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -146)
             ArenaSticky.bodyText:SetWidth(math.max(f:GetWidth() - 25, 80))
         end
         if minBtn then
@@ -1285,6 +1821,12 @@ local function ParseEnemyCompFromArenaUnits()
     local tokens = CollectArenaEnemyTokens()
     if #tokens < 2 then
         return nil
+    end
+    -- In 3v3, a two-token key (e.g. DISC-MAGE) collides with 2v2 strats. Wait until we have three enemies + three specs.
+    if IsThreeManArenaMatch() then
+        if #tokens < 3 or CountArenaEnemyUnits() < 3 then
+            return nil
+        end
     end
     for _, t in ipairs(tokens) do
         table.insert(ArenaSticky.enemyClasses, t)
@@ -1375,17 +1917,19 @@ UpdateNotesForComp = function(compKey, allowFallbackRole, forcedRole)
 
     local detectedKey = compKey
     local strat = FindStrategyForCompKey(compKey)
-    if not strat then
-        ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow("TBD", "TBD"))
+    local resolved = SelectStrategyForTeamComp(strat, compKey)
+    if not resolved then
+        ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow("TBD", "TBD", ""))
         ArenaSticky.bodyText:SetText("No strategy saved for: " .. tostring(detectedKey) .. "\nUse /as edit to add one.")
         return
     end
 
-    local kill = (strat.header and strat.header.kill) or "TBD"
-    local cc = (strat.header and strat.header.cc) or "TBD"
-    local roleText = role and strat.roles and strat.roles[role]
+    local kill = (resolved.header and resolved.header.kill) or "TBD"
+    local cc = (resolved.header and resolved.header.cc) or "TBD"
+    local swap = (resolved.header and (resolved.header.swap or resolved.header.cc2)) or ""
+    local roleText = role and resolved.roles and resolved.roles[role]
     if (not roleText or roleText == "") and allowFallbackRole then
-        local fallbackRole, fallbackText = GetFallbackRoleAndText(strat)
+        local fallbackRole, fallbackText = GetFallbackRoleAndText(resolved)
         if fallbackText then
             role = fallbackRole
             roleText = ("[%s] %s"):format(fallbackRole, fallbackText)
@@ -1396,7 +1940,7 @@ UpdateNotesForComp = function(compKey, allowFallbackRole, forcedRole)
     end
     roleText = roleText or "No note saved for your class in this comp."
 
-    ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(kill, cc))
+    ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow(kill, cc, swap))
     ArenaSticky.bodyText:SetText(roleText)
 end
 
@@ -1594,7 +2138,7 @@ end
 
 local function SerializeStrategiesSimple(strategiesTable)
     -- Stable custom format:
-    -- comp~kill~cc~<ROLE_TOKENS...> ; ...
+    -- comp~kill~cc~swap~<ROLE_TOKENS...> ; ... (older exports may omit swap/cc2 field)
     -- (Values are escaped for "~" and ";" using backticks.)
     strategiesTable = strategiesTable or ArenaStickyDB.strategies
     local function esc(s)
@@ -1605,14 +2149,38 @@ local function SerializeStrategiesSimple(strategiesTable)
         s = s:gsub(";", "`s")
         return s
     end
+    local function escv(s)
+        s = s or ""
+        s = s:gsub("`", "``")
+        s = s:gsub("%^", "`c")
+        s = s:gsub(",", "`m")
+        return s
+    end
+    local function serializeVariants(teamVariants)
+        if type(teamVariants) ~= "table" then
+            return ""
+        end
+        local out = {}
+        for teamKey, v in pairs(teamVariants) do
+            local h = (type(v) == "table" and v.header) or {}
+            local r = (type(v) == "table" and v.roles) or {}
+            local seg = { escv(teamKey), escv(h.kill or ""), escv(h.cc or ""), escv(h.swap or h.cc2 or "") }
+            for _, token in ipairs(ROLE_TOKENS) do
+                seg[#seg + 1] = escv(r[token] or "")
+            end
+            out[#out + 1] = table.concat(seg, "^")
+        end
+        return table.concat(out, ",")
+    end
     local parts = {}
     for comp, data in pairs(strategiesTable or {}) do
         local h = data.header or {}
         local r = data.roles or {}
-        local segParts = { esc(comp), esc(h.kill), esc(h.cc) }
+        local segParts = { esc(comp), esc(h.kill), esc(h.cc), esc(h.swap or h.cc2 or "") }
         for _, token in ipairs(ROLE_TOKENS) do
             table.insert(segParts, esc(r[token]))
         end
+        table.insert(segParts, esc(serializeVariants(data.teamVariants)))
         local seg = table.concat(segParts, "~")
         table.insert(parts, seg)
     end
@@ -1629,6 +2197,41 @@ local function DeserializeStrategiesSimple(str)
         s = s:gsub("`0", "`")
         return s
     end
+    local function unescv(s)
+        s = s or ""
+        s = s:gsub("``", "`0")
+        s = s:gsub("`c", "^")
+        s = s:gsub("`m", ",")
+        s = s:gsub("`0", "`")
+        return s
+    end
+    local function parseVariants(blob)
+        if not blob or blob == "" then
+            return nil
+        end
+        local t = {}
+        for ent in string.gmatch(blob, "([^,]+)") do
+            local f = { strsplit("^", ent) }
+            local teamKey = unescv(f[1] or "")
+            if teamKey ~= "" then
+                local roles = {}
+                local hasCc2 = (#f >= (4 + #ROLE_TOKENS))
+                local cc2Field = hasCc2 and (f[4] or "") or ""
+                local roleStart = hasCc2 and 4 or 3
+                for i, token in ipairs(ROLE_TOKENS) do
+                    roles[token] = unescv(f[roleStart + i] or "")
+                end
+                t[teamKey] = {
+                    header = { kill = unescv(f[2] or ""), cc = unescv(f[3] or ""), swap = unescv(cc2Field) },
+                    roles = roles,
+                }
+            end
+        end
+        if next(t) == nil then
+            return nil
+        end
+        return t
+    end
     local out = {}
     for seg in string.gmatch(str or "", "([^;]+)") do
         local fields = { strsplit("~", seg) }
@@ -1637,14 +2240,22 @@ local function DeserializeStrategiesSimple(str)
         local c = fields[3]
         if a and a ~= "" then
             local roles = {}
+            local hasCc2 = (#fields >= (4 + #ROLE_TOKENS))
+            local cc2Field = hasCc2 and fields[4] or ""
+            local roleStart = hasCc2 and 4 or 3
             for i, token in ipairs(ROLE_TOKENS) do
-                roles[token] = unesc(fields[3 + i])
+                roles[token] = unesc(fields[roleStart + i])
             end
             local compKey = unesc(a)
             out[compKey] = {
-                header = { kill = unesc(b), cc = unesc(c) },
+                header = { kill = unesc(b), cc = unesc(c), swap = unesc(cc2Field) },
                 roles = roles,
             }
+            local vblob = unesc(fields[roleStart + 1 + #ROLE_TOKENS] or "")
+            local variants = parseVariants(vblob)
+            if variants then
+                out[compKey].teamVariants = variants
+            end
         end
     end
     return out
@@ -1881,13 +2492,6 @@ local function FirstLineOfPaste(fullText)
     return TrimImportField(fullText)
 end
 
-function ArenaSticky.BuildExportStringActiveProfile()
-    EnsureDB()
-    local name = ArenaStickyDB.activeProfile or "Default"
-    local blob = SerializeStrategiesSimple(ArenaStickyDB.strategies)
-    return string.format("AS2|%s|%d|%d|%s", name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), HexEncode(blob))
-end
-
 function ArenaSticky.BuildExportStringAllProfiles()
     EnsureDB()
     local lines = { "ASPACK2" }
@@ -1899,14 +2503,59 @@ function ArenaSticky.BuildExportStringAllProfiles()
     return table.concat(lines, "\n")
 end
 
-local function ApplyImportedStrategiesToActive(strategies, ver, ts)
+local function NormalizeStrategyScope(scope)
+    local s = (scope or "all"):lower()
+    if s == "2v2" or s == "2" then return "2v2" end
+    if s == "3v3" or s == "3" then return "3v3" end
+    return "all"
+end
+
+local function CompSizeFromKey(compKey)
+    local body = compKey and (compKey:match("^%d%-(.+)$") or compKey) or ""
+    local n = 0
+    for _ in body:gmatch("[^-]+") do
+        n = n + 1
+    end
+    return n
+end
+
+local function FilterStrategiesByScope(strategies, scope)
+    local out = {}
+    local want = NormalizeStrategyScope(scope)
+    for k, v in pairs(strategies or {}) do
+        local n = CompSizeFromKey(k)
+        local keep = (want == "all") or (want == "2v2" and n == 2) or (want == "3v3" and n >= 3)
+        if keep then
+            out[k] = DeepCopy(v)
+        end
+    end
+    return out
+end
+
+local function ApplyImportedStrategiesToActive(strategies, ver, ts, scope)
     EnsureDB()
     local activeName = ArenaStickyDB.activeProfile or "Default"
     local prof = ArenaStickyDB.profiles[activeName]
     if not prof then
         return false, "Internal error: no active profile."
     end
-    prof.strategies = strategies
+    local useScope = NormalizeStrategyScope(scope)
+    if useScope == "all" then
+        prof.strategies = strategies
+    else
+        local kept = {}
+        for k, v in pairs(prof.strategies or {}) do
+            local n = CompSizeFromKey(k)
+            local replaceThis = (useScope == "2v2" and n == 2) or (useScope == "3v3" and n >= 3)
+            if not replaceThis then
+                kept[k] = v
+            end
+        end
+        for k, v in pairs(strategies or {}) do
+            kept[k] = v
+        end
+        prof.strategies = kept
+    end
     prof.version = ver
     prof.lastUpdated = ts
     SyncActiveProfilePointers()
@@ -1916,7 +2565,7 @@ local function ApplyImportedStrategiesToActive(strategies, ver, ts)
     if ArenaSticky.EditorRefreshFromProfile then
         ArenaSticky.EditorRefreshFromProfile()
     end
-    print("|cff33ff99ArenaSticky|r: Imported notes into profile |cff00ccff" .. activeName .. "|r (v" .. tostring(ver) .. ").")
+    print("|cff33ff99ArenaSticky|r: Imported " .. useScope .. " notes into profile |cff00ccff" .. activeName .. "|r (v" .. tostring(ver) .. ").")
     return true
 end
 
@@ -1928,10 +2577,21 @@ function ArenaSticky.ImportSingleLineIntoActive(line)
     line = line:gsub("\226\128\139", "")
     local low = line:lower()
 
+    local scope = "all"
+    local as3pos = low:find("as3|", 1, true)
     local as2pos = low:find("as2|", 1, true)
-    if as2pos then
-        local rest = line:sub(as2pos + 4)
+    if as3pos or as2pos then
+        local rest = line:sub((as3pos and (as3pos + 4)) or (as2pos + 4))
         rest = CollapseAsciiPipeRunsForHexPayload(rest)
+        if as3pos then
+            local i1 = FindAsciiPipe(rest, 1)
+            local i2 = i1 and FindAsciiPipe(rest, i1 + 1) or nil
+            if not i1 or not i2 then
+                return false, "Could not parse AS3 line (need scope|profile|version|timestamp|hex)."
+            end
+            scope = NormalizeStrategyScope(TrimImportField(rest:sub(1, i1 - 1)))
+            rest = rest:sub(i1 + 1) -- now profile|version|timestamp|hex
+        end
         local _, ver, ts, hexblob = SplitAs2ByLastThreePipes(rest)
         if ver == nil or ts == nil then
             _, ver, ts, hexblob = SplitFourPipeFields(rest)
@@ -1942,7 +2602,7 @@ function ArenaSticky.ImportSingleLineIntoActive(line)
             local prev = rest:sub(1, math.min(120, n)) .. ((n > 120) and " …" or "")
             prev = prev:gsub("|", "/")
             return false, string.format(
-                "Could not parse AS2 line (expected name, version, unix time, hex after AS2). Payload length=%d. ASCII bar count=%d (need 3). Snippet: %s",
+                "Could not parse AS2/AS3 line (expected profile, version, unix time, hex). Payload length=%d. ASCII bar count=%d (need 3). Snippet: %s",
                 n,
                 pipes,
                 prev
@@ -1950,10 +2610,10 @@ function ArenaSticky.ImportSingleLineIntoActive(line)
         end
         local raw = HexDecode(hexblob)
         if raw == nil then
-            return false, "AS2 import: hex block is invalid (corrupted or incomplete paste)."
+            return false, "AS2/AS3 import: hex block is invalid (corrupted or incomplete paste)."
         end
-        local strategies = DeserializeStrategiesSimple(raw)
-        local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts)
+        local strategies = FilterStrategiesByScope(DeserializeStrategiesSimple(raw), scope)
+        local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts, scope)
         if not ok then
             return false, err
         end
@@ -1979,11 +2639,23 @@ function ArenaSticky.ImportSingleLineIntoActive(line)
         )
     end
     local strategies = DeserializeStrategiesSimple(blob)
-    local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts)
+    local ok, err = ApplyImportedStrategiesToActive(strategies, ver, ts, "all")
     if not ok then
         return false, err
     end
     return true
+end
+
+function ArenaSticky.BuildExportStringActiveProfile(scope)
+    EnsureDB()
+    local useScope = NormalizeStrategyScope(scope)
+    local name = ArenaStickyDB.activeProfile or "Default"
+    local scoped = FilterStrategiesByScope(ArenaStickyDB.strategies, useScope)
+    local blob = SerializeStrategiesSimple(scoped)
+    if useScope == "all" then
+        return string.format("AS2|%s|%d|%d|%s", name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), HexEncode(blob))
+    end
+    return string.format("AS3|%s|%s|%d|%d|%s", useScope, name, ArenaStickyDB.version or 1, ArenaStickyDB.lastUpdated or time(), HexEncode(blob))
 end
 
 function ArenaSticky.ImportPackText(fullText)
@@ -2076,15 +2748,15 @@ function ArenaSticky.ImportFromPaste(fullText)
         return ArenaSticky.ImportPackText(fullText)
     end
     -- AS1/AS2 are one logical line — merge newlines so wrapped pastes work
-    if first:lower():match("^as1|") or first:lower():match("^as2|") then
+    if first:lower():match("^as1|") or first:lower():match("^as2|") or first:lower():match("^as3|") then
         local merged = fullText:gsub("[\r\n]+", "")
         return ArenaSticky.ImportSingleLineIntoActive(merged)
     end
-    return false, "Not a valid ArenaSticky export (need AS2/AS1 line or ASPACK1/2 block)."
+    return false, "Not a valid ArenaSticky export (need AS3/AS2/AS1 line or ASPACK1/2 block)."
 end
 
 StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
-    text = "Copy this string (Ctrl+C). One line = AS2 active profile; multi-line = ASPACK2 (all profiles).",
+    text = "Copy this string (Ctrl+C).\n\nAS2/AS3 = active profile export\nASPACK2 = all profiles export",
     button1 = OKAY,
     hasEditBox = 1,
     maxLetters = 9999999,
@@ -2202,9 +2874,11 @@ local function HandleStratSyncChunked(sender, ver, ts, idx, total, payload)
     ApplyIncomingStrategies(ver, ts, blob, sender)
 end
 
-function ArenaSticky:PushFullSync()
+function ArenaSticky:PushFullSync(scope)
     if not C_ChatInfo then return end
-    local blob = SerializeStrategiesSimple()
+    local useScope = NormalizeStrategyScope(scope)
+    local scoped = FilterStrategiesByScope(ArenaStickyDB and ArenaStickyDB.strategies or {}, useScope)
+    local blob = SerializeStrategiesSimple(scoped)
     local ver = ArenaStickyDB.version or 0
     local ts = ArenaStickyDB.lastUpdated or 0
     local msgs = BuildStratSyncPayloadMessages(ver, ts, blob)
@@ -2219,6 +2893,22 @@ function ArenaSticky:PushFullSync()
             C_ChatInfo.SendAddonMessage(PREFIX, m, channel)
         end)
     end
+end
+
+function ArenaSticky.DebugLoopbackSync(scope)
+    EnsureDB()
+    local useScope = NormalizeStrategyScope(scope)
+    local scoped = FilterStrategiesByScope(ArenaStickyDB and ArenaStickyDB.strategies or {}, useScope)
+    local blob = SerializeStrategiesSimple(scoped)
+    local ver = (ArenaStickyDB.version or 0) + 1
+    local ts = time()
+    local ok = ApplyIncomingStrategies(ver, ts, blob, "self-test")
+    if ok then
+        print("|cff33ff99ArenaSticky|r: Self-test sync applied (" .. useScope .. ").")
+    else
+        print("|cffff4444ArenaSticky|r: Self-test sync did not apply (" .. useScope .. ").")
+    end
+    return ok
 end
 
 local function HandleAddonMessage(prefix, msg, channel, sender)
@@ -2244,6 +2934,9 @@ local function HandleAddonMessage(prefix, msg, channel, sender)
 end
 
 local function TryDetectAndUpdate()
+    RebuildGuidUnitMap()
+    local nUnits = CountArenaEnemyUnits()
+    ArenaSticky.maxArenaEnemyUnitsSeen = math.max(ArenaSticky.maxArenaEnemyUnitsSeen or 0, nUnits)
     UpdateEnemyDetectText()
     local comp = ParseEnemyCompFromArenaUnits()
     if comp then
@@ -2255,6 +2948,17 @@ local function TryDetectAndUpdate()
         -- Unlike /as test, arena detection never called Show(); sticky stayed hidden after load.
         if InArenaWithOpponents() and (ArenaStickyDB.autoShowInArena ~= false) and not ArenaSticky.suppressAutoShow then
             EnsureInitialized()
+            ArenaSticky.mainFrame:Show()
+        end
+    elseif IsThreeManArenaMatch() then
+        -- Avoid leaving a 2-enemy comp/strat on screen while the third opponent or spec is still resolving.
+        EnsureInitialized()
+        ArenaSticky.currentCompKey = nil
+        if ArenaSticky.headerText and ArenaSticky.bodyText then
+            ArenaSticky.headerText:SetText(ArenaSticky.FormatStickyHeaderKillCcForWindow("TBD", "TBD", ""))
+            ArenaSticky.bodyText:SetText("Detecting 3v3 enemy comp…")
+        end
+        if InArenaWithOpponents() and (ArenaStickyDB.autoShowInArena ~= false) and not ArenaSticky.suppressAutoShow then
             ArenaSticky.mainFrame:Show()
         end
     end
@@ -2303,7 +3007,7 @@ local function StartArenaMatchupPolling()
     EnsureArenaPollFrame():Show()
 end
 
-local function RebuildGuidUnitMap()
+RebuildGuidUnitMap = function()
     wipe(ArenaSticky.guidToUnit)
     for i = 1, 3 do
         local unit = "arena" .. i
@@ -2317,11 +3021,31 @@ local function RebuildGuidUnitMap()
 end
 
 local function HandleCombatLog()
-    local _, subevent, _, sourceGUID, _, _, _, _, _, _, _, spellName = CombatLogGetCurrentEventInfo()
-    if not sourceGUID or not spellName then return end
+    -- Payload layout: … destRaidFlags, spellId (12), spellName (13), spellSchool (14). Older code read 12 as name (wrong).
+    local _, subevent, _, sourceGUID, _, _, _, _, _, _, _, spellId, spellName = CombatLogGetCurrentEventInfo()
+    if not sourceGUID or type(subevent) ~= "string" or subevent:sub(1, 6) ~= "SPELL_" then
+        return
+    end
+    if type(spellName) ~= "string" or spellName == "" then
+        return
+    end
     local unit = ArenaSticky.guidToUnit[sourceGUID]
-    if not unit then return end
+    if not unit then
+        RebuildGuidUnitMap()
+        unit = ArenaSticky.guidToUnit[sourceGUID]
+        if not unit then
+            return
+        end
+    end
     local token = SPELL_SPEC_TOKEN[spellName]
+    if not token then
+        -- Rank/localized names often differ from base spell (e.g. "Polymorph (Sheep)").
+        if spellName:match("^Polymorph") then
+            token = "MAGE"
+        elseif spellName:match("^Frostbolt") or spellName:match("^Fireball") or spellName:match("^Scorch") then
+            token = "MAGE"
+        end
+    end
     if token then
         local _, class = UnitClass(unit)
         if SpecTokenMatchesClass(token, class) then
@@ -2369,7 +3093,6 @@ local function PrintHelp()
     print("  /asdebug   (prints diagnostics even when /as is taken)")
     print("  /as hide   (stops auto-opening the sticky until next match or /as show)")
     print("  /as test        (random comp)   |   /as test rmp   (named alias)")
-    print("  /as debug")
     print("  /as edit | show | hide | resetwindow | sync | request")
 end
 
@@ -2499,14 +3222,6 @@ local function SlashArenaSticky(msg)
         return
     end
 
-    if a == "debug" then
-        local ok, err = pcall(PrintArenaDebug)
-        if not ok then
-            print("|cffff4444ArenaSticky|r debug failed: " .. tostring(err))
-        end
-        return
-    end
-
     if a == "help" then
         PrintHelp()
         return
@@ -2555,6 +3270,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
         EnsureInitialized()
         if not InArenaWithOpponents() then
             ArenaSticky.lastPrintedCompKey = nil
+            ArenaSticky.maxArenaEnemyUnitsSeen = nil
             ArenaSticky.suppressAutoShow = false
             UpdateEnemyDetectText()
         end
