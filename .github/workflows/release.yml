@@ -47,5 +47,5 @@ jobs:
           project_id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           game_endpoint: wow
           file_path: ${{ steps.locate_zip.outputs.zip_path }}
-          release_type: release
+          release_type: beta
           display_name: ArenaSticky ${{ github.ref_name }}

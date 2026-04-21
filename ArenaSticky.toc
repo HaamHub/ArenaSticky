@@ -1,4 +1,4 @@
-## Interface: 20504
+## Interface: 20505
 ## Title: ArenaSticky
 ## Notes: Arena sticky notes, teammate sync, named profiles, import/export
 ## IconTexture: Interface\AddOns\ArenaSticky\icons\as_icon-256
