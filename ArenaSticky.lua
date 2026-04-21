@@ -668,6 +668,47 @@ local function MigrateBracketPrefixedKeysAllProfiles()
     end
 end
 
+--- Coerce bad SavedVariables (strings/tables) so Frame APIs do not error (e.g. SetPoint "invalid argument").
+local function SanitizeWindowDB()
+    if not ArenaStickyDB then return end
+    local w = ArenaStickyDB.window
+    if type(w) ~= "table" then
+        ArenaStickyDB.window = {
+            x = 0,
+            y = 0,
+            width = 320,
+            height = 218,
+            scale = 1.0,
+            alpha = 0.95,
+        }
+        return
+    end
+    local function clamp(n, lo, hi, def)
+        local v = tonumber(n)
+        if not v or v ~= v then
+            return def
+        end
+        if v < lo then return lo end
+        if v > hi then return hi end
+        return v
+    end
+    w.x = clamp(w.x, -10000, 10000, 0)
+    w.y = clamp(w.y, -10000, 10000, 0)
+    w.width = clamp(w.width, 260, 5000, 320)
+    w.height = clamp(w.height, 140, 5000, 218)
+    w.scale = clamp(w.scale, 0.5, 2.0, 1.0)
+    w.alpha = clamp(w.alpha, 0.2, 1.0, 0.95)
+    if w.minimized ~= nil and w.minimized ~= true and w.minimized ~= false then
+        w.minimized = false
+    end
+    if w.widthBeforeMin ~= nil then
+        w.widthBeforeMin = tonumber(w.widthBeforeMin)
+    end
+    if w.heightBeforeMin ~= nil then
+        w.heightBeforeMin = tonumber(w.heightBeforeMin)
+    end
+end
+
 local function EnsureDB()
     ArenaStickyDB = ArenaStickyDB or {}
     ArenaStickyDB.playerRoleOverride = ArenaStickyDB.playerRoleOverride or nil
@@ -679,6 +720,7 @@ local function EnsureDB()
         scale = 1.0,
         alpha = 0.95,
     }
+    SanitizeWindowDB()
 
     -- Named profiles: each has strategies + version + lastUpdated (teammate sync uses active profile).
     if type(ArenaStickyDB.profiles) ~= "table" then
@@ -2061,35 +2103,6 @@ StaticPopupDialogs["ARENASTICKY_EXPORT_TEXT"] = {
     end,
 }
 
-StaticPopupDialogs["ARENASTICKY_IMPORT_TEXT"] = {
-    text = "Paste AS2 (or legacy AS1) one-line export, or ASPACK1/2 multi-line pack. Then click Import.",
-    button1 = "Import",
-    button2 = CANCEL,
-    hasEditBox = 1,
-    maxLetters = 9999999,
-    wide = true,
-    whileDead = true,
-    timeout = 0,
-    hideOnEscape = true,
-    OnShow = function(self)
-        local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
-        if eb then
-            eb:SetMaxLetters(9999999)
-            eb:SetText("")
-        end
-    end,
-    OnAccept = function(self)
-        local eb = self.GetEditBox and self:GetEditBox() or _G[self:GetName() .. "EditBox"]
-        local t = eb and eb:GetText() or ""
-        local ok, err = ArenaSticky.ImportFromPaste(t)
-        if ok then
-            print("|cff33ff99ArenaSticky|r: Import finished.")
-        else
-            print("|cffff4444ArenaSticky|r: " .. tostring(err))
-        end
-    end,
-}
-
 local ADDON_MSG_MAX = 255
 
 --- Split serialized blob into ≤255-char messages: STRATSYNC#ver#ts#idx#total#payload
@@ -2352,14 +2365,12 @@ end
 
 local function PrintHelp()
     print("|cff33ff99ArenaSticky|r commands:")
-    print("  /as help   (also: /ar, /arenasticky, /asticky — if /as is used by another addon)")
+    print("  /as help   (also: /arenasticky, /asticky — use those if /as is another addon)")
     print("  /asdebug   (prints diagnostics even when /as is taken)")
     print("  /as hide   (stops auto-opening the sticky until next match or /as show)")
     print("  /as test        (random comp)   |   /as test rmp   (named alias)")
     print("  /as debug")
     print("  /as edit | show | hide | resetwindow | sync | request")
-    print("  /as export      (active profile)   |   /as export all   (all profiles, share/backup)")
-    print("  /as import      (paste AS2 / ASPACK2 — legacy AS1 / ASPACK1 still work)")
 end
 
 local function ResetWindow()
@@ -2425,11 +2436,7 @@ local function ExecuteAsTest(alias, rawMsg, tokenA, tokenB)
     end
 end
 
-SLASH_ARENASTICKY1 = "/as"
-SLASH_ARENASTICKY2 = "/arenasticky"
-SLASH_ARENASTICKY3 = "/asticky"
-SLASH_ARENASTICKY4 = "/ar"
-SlashCmdList["ARENASTICKY"] = function(msg)
+local function SlashArenaSticky(msg)
     msg = (msg or ""):match("^%s*(.-)%s*$") or ""
     local lower = msg:lower()
     local a, b = lower:match("^(%S+)%s*(.*)$")
@@ -2451,13 +2458,19 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     end
 
     if a == "show" then
-        EnsureInitialized()
-        ArenaSticky.suppressAutoShow = false
-        ArenaSticky.mainFrame:Show()
-        TryDetectAndUpdate()
-        if InArenaWithOpponents() then
-            ScheduleArenaDetectBurst()
-            StartArenaMatchupPolling()
+        local ok, err = pcall(function()
+            EnsureInitialized()
+            ArenaSticky.suppressAutoShow = false
+            ArenaSticky.mainFrame:Show()
+            TryDetectAndUpdate()
+            if InArenaWithOpponents() then
+                ScheduleArenaDetectBurst()
+                StartArenaMatchupPolling()
+            end
+        end)
+        if not ok then
+            print("|cffff4444ArenaSticky|r: /as show failed: " .. tostring(err))
+            print("|cffff8800ArenaSticky|r: Try |cff00ccff/reload|r, |cff00ccff/arenasticky show|r, or |cff00ccff/asticky show|r if another addon uses |cff00ccff/as|r.")
         end
         return
     end
@@ -2477,27 +2490,6 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     if a == "request" then
         C_ChatInfo.SendAddonMessage(PREFIX, "FULLSYNC#0#0#", IsInGroup(2) and "INSTANCE_CHAT" or (IsInRaid() and "RAID" or "PARTY"))
         print("|cff33ff99ArenaSticky|r: Requested strategy sync.")
-        return
-    end
-
-    if a == "export" then
-        EnsureInitialized()
-        EnsureDB()
-        local sub = ((b or ""):match("^(%S+)") or ""):lower()
-        if sub == "all" or sub == "pack" then
-            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringAllProfiles()
-            print("|cff33ff99ArenaSticky|r: Exporting |cff00ccffall profiles|r (multi-line). Copy from popup.")
-        else
-            ArenaSticky.lastExportString = ArenaSticky.BuildExportStringActiveProfile()
-            print("|cff33ff99ArenaSticky|r: Exporting |cff00ccff" .. tostring(ArenaStickyDB.activeProfile or "Default") .. "|r (one line). Copy from popup.")
-        end
-        StaticPopup_Show("ARENASTICKY_EXPORT_TEXT")
-        return
-    end
-
-    if a == "import" then
-        EnsureInitialized()
-        StaticPopup_Show("ARENASTICKY_IMPORT_TEXT")
         return
     end
 
@@ -2523,6 +2515,16 @@ SlashCmdList["ARENASTICKY"] = function(msg)
     PrintHelp()
 end
 
+--- WoW uses last registration for a slash string; re-bind after login so /as is not stolen by another addon.
+local function RegisterArenaStickySlashCommands()
+    SLASH_ARENASTICKY1 = "/as"
+    SLASH_ARENASTICKY2 = "/arenasticky"
+    SLASH_ARENASTICKY3 = "/asticky"
+    SlashCmdList["ARENASTICKY"] = SlashArenaSticky
+end
+
+RegisterArenaStickySlashCommands()
+
 -- Dedicated command: always reaches this addon (another mod may own /as).
 SLASH_ARENASTICKYDEBUG1 = "/asdebug"
 SlashCmdList["ARENASTICKYDEBUG"] = function()
@@ -2541,6 +2543,12 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
 
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
+        end
+
+    elseif event == "PLAYER_LOGIN" then
+        RegisterArenaStickySlashCommands()
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, RegisterArenaStickySlashCommands)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -2588,6 +2596,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 ArenaSticky.frame:RegisterEvent("ADDON_LOADED")
+ArenaSticky.frame:RegisterEvent("PLAYER_LOGIN")
 ArenaSticky.frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 ArenaSticky.frame:RegisterEvent("ARENA_OPPONENT_UPDATE")
 ArenaSticky.frame:RegisterEvent("CHAT_MSG_ADDON")
