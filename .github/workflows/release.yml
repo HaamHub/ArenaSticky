@@ -27,9 +27,10 @@ jobs:
 
       # -g wrath: WotLK Classic. Do not use -g 2.5.5 (packager maps 2.x to TBC, not WotLK).
       #    Patch (e.g. 2.5.5) on Curse comes from ## Interface: in the .toc (20505 = 2.5.5).
+      # -n file:label — CurseForge file name = ArenaSticky-0.3.5 (## Title: + project-version from tag).
       - name: Package and publish to CurseForge
         uses: BigWigsMods/packager@v2
         with:
-          args: -g wrath
+          args: -g wrath -n '{package-name}-{project-version}{nolib}{classic}:{package-name}-{project-version}{classic}{nolib}'
         env:
           CF_API_KEY: ${{ secrets.CF_API_TOKEN }}
