@@ -11,6 +11,7 @@ ArenaSticky.specByGuid = ArenaSticky.specByGuid or {}
 ArenaSticky.guidToUnit = ArenaSticky.guidToUnit or {}
 -- If true, /as hide will not be overridden until next match or /as show
 ArenaSticky.suppressAutoShow = false
+ArenaSticky.combatLogActive = false
 
 local UpdateNotesForComp
 local ApplyStickyMinimizedLayout
@@ -2964,6 +2965,16 @@ local function TryDetectAndUpdate()
     end
 end
 
+local tryDetectCoalesce
+local function ScheduleTryDetectSoon()
+    if tryDetectCoalesce then return end
+    tryDetectCoalesce = true
+    C_Timer.After(0.12, function()
+        tryDetectCoalesce = false
+        TryDetectAndUpdate()
+    end)
+end
+
 -- 2v2: arena2 often appears later than arena1; events can fire before both UnitExists.
 local function ScheduleArenaDetectBurst()
     local t = GetTime()
@@ -2981,30 +2992,45 @@ local function ScheduleArenaDetectBurst()
     end
 end
 
-local arenaPollAccum = 0
-local function EnsureArenaPollFrame()
-    if ArenaSticky.pollFrame then return ArenaSticky.pollFrame end
-    local f = CreateFrame("Frame")
-    f:Hide()
-    f:SetScript("OnUpdate", function(self, elapsed)
-        if not InArenaWithOpponents() then
-            arenaPollAccum = 0
-            self:Hide()
-            return
-        end
-        arenaPollAccum = arenaPollAccum + elapsed
-        if arenaPollAccum >= 1.0 then
-            arenaPollAccum = 0
-            TryDetectAndUpdate()
-        end
-    end)
-    ArenaSticky.pollFrame = f
-    return f
+local function SetArenaCombatLogListening(want)
+    want = not not want
+    if want == (ArenaSticky.combatLogActive or false) then return end
+    ArenaSticky.combatLogActive = want
+    if want then
+        ArenaSticky.frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+    else
+        ArenaSticky.frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+    end
+end
+
+local function StopArenaMatchupPolling()
+    ArenaSticky.arenaPollSeq = (ArenaSticky.arenaPollSeq or 0) + 1
 end
 
 local function StartArenaMatchupPolling()
-    arenaPollAccum = 0
-    EnsureArenaPollFrame():Show()
+    StopArenaMatchupPolling()
+    if not InArenaWithOpponents() then
+        SetArenaCombatLogListening(false)
+        return
+    end
+    if not (C_Timer and C_Timer.After) then
+        return
+    end
+    SetArenaCombatLogListening(true)
+    local mySeq = (ArenaSticky.arenaPollSeq or 0) + 1
+    ArenaSticky.arenaPollSeq = mySeq
+    local function tick()
+        if mySeq ~= ArenaSticky.arenaPollSeq then
+            return
+        end
+        if not InArenaWithOpponents() then
+            SetArenaCombatLogListening(false)
+            return
+        end
+        TryDetectAndUpdate()
+        C_Timer.After(1.0, tick)
+    end
+    C_Timer.After(1.0, tick)
 end
 
 RebuildGuidUnitMap = function()
@@ -3031,7 +3057,12 @@ local function HandleCombatLog()
     end
     local unit = ArenaSticky.guidToUnit[sourceGUID]
     if not unit then
-        RebuildGuidUnitMap()
+        -- Most SPELL_* events are from non-arenas (pets, party, PvE). Rebuild at most a few times per second.
+        local now = GetTime()
+        if (ArenaSticky.lastGuidMapCombatRebuild or 0) + 0.35 <= now then
+            ArenaSticky.lastGuidMapCombatRebuild = now
+            RebuildGuidUnitMap()
+        end
         unit = ArenaSticky.guidToUnit[sourceGUID]
         if not unit then
             return
@@ -3050,7 +3081,7 @@ local function HandleCombatLog()
         local _, class = UnitClass(unit)
         if SpecTokenMatchesClass(token, class) then
             ArenaSticky.specByGuid[sourceGUID] = token
-            TryDetectAndUpdate()
+            ScheduleTryDetectSoon()
         end
     end
 end
@@ -3269,6 +3300,8 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         EnsureInitialized()
         if not InArenaWithOpponents() then
+            StopArenaMatchupPolling()
+            SetArenaCombatLogListening(false)
             ArenaSticky.lastPrintedCompKey = nil
             ArenaSticky.maxArenaEnemyUnitsSeen = nil
             ArenaSticky.suppressAutoShow = false
@@ -3280,6 +3313,9 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
                 TryDetectAndUpdate()
                 ScheduleArenaDetectBurst()
                 StartArenaMatchupPolling()
+            else
+                StopArenaMatchupPolling()
+                SetArenaCombatLogListening(false)
             end
         end)
 
@@ -3304,7 +3340,7 @@ ArenaSticky.frame:SetScript("OnEvent", function(_, event, ...)
                 local auraToken = DetectSpecFromAuras(unit)
                 if auraToken then
                     ArenaSticky.specByGuid[guid] = auraToken
-                    TryDetectAndUpdate()
+                    ScheduleTryDetectSoon()
                 end
             end
         end
@@ -3316,6 +3352,5 @@ ArenaSticky.frame:RegisterEvent("PLAYER_LOGIN")
 ArenaSticky.frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 ArenaSticky.frame:RegisterEvent("ARENA_OPPONENT_UPDATE")
 ArenaSticky.frame:RegisterEvent("CHAT_MSG_ADDON")
-ArenaSticky.frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 ArenaSticky.frame:RegisterEvent("UNIT_AURA")
 ArenaSticky.frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
