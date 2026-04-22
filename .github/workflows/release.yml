@@ -25,27 +25,11 @@ jobs:
         run: |
           sed -i "s/PROJECT_ID_PLACEHOLDER/${{ vars.CURSEFORGE_PROJECT_ID }}/g" .pkgmeta
 
+      # -g wrath: WotLK Classic. Do not use -g 2.5.5 (packager maps 2.x to TBC, not WotLK).
+      #    Patch (e.g. 2.5.5) on Curse comes from ## Interface: in the .toc (20505 = 2.5.5).
       - name: Package and publish to CurseForge
         uses: BigWigsMods/packager@v2
+        with:
+          args: -g wrath
         env:
           CF_API_KEY: ${{ secrets.CF_API_TOKEN }}
-
-      - name: Locate packaged zip
-        id: locate_zip
-        run: |
-          ZIP_PATH="$(ls -1 .release/*.zip | head -n 1)"
-          if [ -z "$ZIP_PATH" ]; then
-            echo "No zip found in .release/"
-            exit 1
-          fi
-          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
-
-      - name: Upload zip to CurseForge
-        uses: itsmeow/curseforge-upload@v3
-        with:
-          token: ${{ secrets.CF_API_TOKEN }}
-          project_id: ${{ vars.CURSEFORGE_PROJECT_ID }}
-          game_endpoint: wow
-          file_path: ${{ steps.locate_zip.outputs.zip_path }}
-          release_type: beta
-          display_name: ArenaSticky ${{ github.ref_name }}
